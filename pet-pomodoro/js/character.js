@@ -20,13 +20,14 @@ export const SPECIES = {
   human: { label: '人', ears: 'none', tail: 'none' },
 };
 
+// 配色整体偏暖、偏柔，主打「看着就想抱一下」
 export const PALETTES = [
   { id: 'orange', label: '橘', main: '#f2a25c', dark: '#d9803a', light: '#ffd9b0' },
   { id: 'cream', label: '奶油', main: '#f0dcc4', dark: '#d3b493', light: '#fff3e4' },
-  { id: 'gray', label: '灰', main: '#9aa4b2', dark: '#6f7b8c', light: '#d5dbe4' },
+  { id: 'milktea', label: '奶茶', main: '#c8a184', dark: '#a37c60', light: '#ecd7c3' },
   { id: 'mint', label: '薄荷', main: '#8fd0bd', dark: '#5fae98', light: '#cdeee4' },
   { id: 'pink', label: '粉', main: '#f4a6bb', dark: '#d9758f', light: '#ffd6e1' },
-  { id: 'ink', label: '墨', main: '#5a5f72', dark: '#3c4054', light: '#9298ad' },
+  { id: 'ink', label: '墨', main: '#6b6478', dark: '#4a4557', light: '#a49dae' },
 ];
 
 export function paletteById(id) {
@@ -116,6 +117,11 @@ export class Character {
     for (const el of this.svg.querySelectorAll('[data-part]')) {
       this.parts[el.dataset.part] = el;
     }
+    // 摸摸头：点一下就开心地弹一下，冒爱心
+    if (!this._petBound) {
+      this.host.addEventListener('pointerdown', () => this.pet());
+      this._petBound = true;
+    }
     this.setHead(this.config.head);
     if (!this.running) this.start();
   }
@@ -162,6 +168,16 @@ export class Character {
     for (const k of WAVE_KEYS) this.springs[k].target = waveValue(pose, k);
     if (name === 'cheer') this.burst('confetti', 18);
     if (name === 'break') this.burst('heart', 3);
+  }
+
+  /** 被摸了：给弹簧一个向上的初速度，看起来就像被顺毛顺得一激灵 */
+  pet() {
+    this.springs.bodyY.velocity -= 4;
+    this.springs.headY.velocity -= 3;
+    this.springs.squash.velocity -= 0.05;
+    this.glanceTarget = (Math.random() - 0.5) * 10;
+    this.twitch = 1;
+    this.burst('heart', 2);
   }
 
   start() {

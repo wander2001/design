@@ -43,6 +43,9 @@
 
 * { box-sizing: border-box; }
 
+/* 下面很多组件用了 flex / grid，会盖掉浏览器给 [hidden] 的 display:none */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -101,7 +104,8 @@ body {
 .ring-progress[data-phase='short'] { stroke: var(--short); }
 .ring-progress[data-phase='long'] { stroke: var(--long); }
 
-.char-host { position: absolute; inset: 6%; }
+.char-host { position: absolute; inset: 6%; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.char-host:active { transform: scale(.99); }
 .character { width: 100%; height: 100%; overflow: visible; }
 
 /* —— 读数 —— */
@@ -243,10 +247,39 @@ body {
 }
 .framer canvas:active { cursor: grabbing; }
 .framer-hint { font-size: 12px; color: var(--ink-soft); }
+.framer { position: relative; }
+.framer-busy {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--card) 78%, transparent);
+  backdrop-filter: blur(2px);
+  font-size: 14px; color: var(--ink);
+}
+.spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* AI / 本地滤镜 切换 */
+.mode-tabs {
+  display: flex; gap: 6px; align-self: center;
+  background: var(--bg-soft); border: 1px solid var(--line);
+  padding: 4px; border-radius: 12px;
+}
+.mode-tabs .tab { padding: 7px 16px; font-size: 13px; }
+
+.ai-panel { display: flex; flex-direction: column; gap: 10px; }
+.ai-panel .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hint.ok { color: var(--short); }
+.hint.bad { color: var(--accent); }
 
 .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
 .controls-grid label { font-size: 12px; color: var(--ink-soft); display: flex; flex-direction: column; gap: 4px; }
-.controls-grid label.check, .controls-grid button { grid-column: 1 / -1; }
+.controls-grid label.check, .controls-grid button, .controls-grid .chips { grid-column: 1 / -1; }
 .controls-grid label.check { flex-direction: row; align-items: center; gap: 8px; }
 input[type='range'] { width: 100%; accent-color: var(--accent); }
 

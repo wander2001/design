@@ -1,20 +1,25 @@
-// 形象工作室：上传照片 -> 取景 -> 风格化 -> 选身体 -> 存成伙伴
+// 形象工作室：上传照片 -> 取景 -> 生成形象（AI 或本地滤镜）-> 选身体 -> 存成伙伴
 
 import { STYLE_PRESETS, fileToBitmap, stylize, canvasToDataURL } from './cartoonify.js';
 import { Character, SPECIES, PALETTES } from './character.js';
+import { fetchAiStatus, generateCharacter } from './ai.js';
 import { store } from './store.js';
 
 const PREVIEW_SIZE = 288;   // 调参时的预览分辨率（求快）
 const EXPORT_SIZE = 384;    // 保存时的分辨率（求清晰）
+const UPLOAD_SIZE = 768;    // 发给 AI 的照片分辨率（够清楚又不会太大）
 
 export class Studio {
   constructor(dialog, onSaved) {
     this.dialog = dialog;
     this.onSaved = onSaved;
-    this.source = null;
+    this.source = null;      // 原始照片
+    this.aiImage = null;     // AI 生成的形象
+    this.mode = 'ai';        // ai | local
     this.editingId = null;
     this.params = defaultParams();
     this.build();
+    this.loadAiStatus();
   }
 
   build() {
@@ -36,24 +41,49 @@ export class Studio {
                   <button type="button" class="btn primary" data-pick>选择照片</button>
                   <button type="button" class="btn ghost" data-sample>没有照片？试试示例</button>
                 </div>
-                <p class="hint">照片只在你的浏览器里处理，不会上传到任何服务器</p>
+                <p class="hint" data-privacy>照片只在你的浏览器里处理，不会上传</p>
               </div>
             </div>
 
             <div class="framer" data-framer hidden>
               <canvas data-preview width="${PREVIEW_SIZE}" height="${PREVIEW_SIZE}"></canvas>
+              <div class="framer-busy" data-busy hidden><span class="spinner"></span>正在画…</div>
               <div class="framer-hint">在圆里拖动移图，滚轮缩放</div>
             </div>
 
+            <div class="mode-tabs" data-modes hidden>
+              <button type="button" class="tab" data-mode="ai">AI 生成</button>
+              <button type="button" class="tab" data-mode="local">本地滤镜</button>
+            </div>
+
+            <!-- AI 模式 -->
+            <div class="ai-panel" data-ai hidden>
+              <div class="picker">
+                <span class="picker-label">画风</span>
+                <div class="chips" data-ai-styles></div>
+              </div>
+              <label class="name-field">补充<input type="text" data-extra maxlength="60" placeholder="比如：戴一顶小黄帽（可留空）"></label>
+              <div class="row">
+                <button type="button" class="btn primary" data-generate>✨ 生成形象</button>
+                <button type="button" class="btn ghost small" data-use-photo hidden>用回原照片</button>
+              </div>
+              <p class="hint" data-ai-status></p>
+            </div>
+
+            <!-- 本地滤镜模式 -->
             <div class="controls-grid" data-controls hidden>
-              <label>缩放<input type="range" data-p="zoom" min="0.6" max="3" step="0.02"></label>
-              <label>旋转<input type="range" data-p="rotation" min="-45" max="45" step="1"></label>
               <label>色阶<input type="range" data-p="levels" min="2" max="10" step="1"></label>
               <label>描边<input type="range" data-p="edge" min="0" max="1.4" step="0.05"></label>
               <label>饱和<input type="range" data-p="saturation" min="0.4" max="2.2" step="0.05"></label>
               <label>亮度<input type="range" data-p="brightness" min="0.7" max="1.4" step="0.02"></label>
-              <label>柔边<input type="range" data-p="feather" min="0" max="1" step="0.05"></label>
+              <div class="chips" data-styles></div>
               <label class="check"><input type="checkbox" data-p="cutout"> 去掉背景（纯色背景效果最好）</label>
+            </div>
+
+            <div class="controls-grid" data-frame-controls hidden>
+              <label>缩放<input type="range" data-p="zoom" min="0.6" max="3" step="0.02"></label>
+              <label>旋转<input type="range" data-p="rotation" min="-45" max="45" step="1"></label>
+              <label>柔边<input type="range" data-p="feather" min="0" max="1" step="0.05"></label>
               <button type="button" class="btn ghost small" data-reset>恢复默认参数</button>
             </div>
           </section>
@@ -61,10 +91,6 @@ export class Studio {
           <section class="studio-col">
             <div class="pet-preview" data-stage></div>
 
-            <div class="picker">
-              <span class="picker-label">画风</span>
-              <div class="chips" data-styles></div>
-            </div>
             <div class="picker">
               <span class="picker-label">身体</span>
               <div class="chips" data-species></div>
@@ -86,9 +112,19 @@ export class Studio {
     this.els = {
       drop: $('[data-drop]'),
       file: $('[data-file]'),
+      privacy: $('[data-privacy]'),
       framer: $('[data-framer]'),
       preview: $('[data-preview]'),
+      busy: $('[data-busy]'),
+      modes: $('[data-modes]'),
+      ai: $('[data-ai]'),
+      aiStyles: $('[data-ai-styles]'),
+      aiStatus: $('[data-ai-status]'),
+      extra: $('[data-extra]'),
+      generate: $('[data-generate]'),
+      usePhoto: $('[data-use-photo]'),
       controls: $('[data-controls]'),
+      frameControls: $('[data-frame-controls]'),
       stage: $('[data-stage]'),
       styles: $('[data-styles]'),
       species: $('[data-species]'),
@@ -102,6 +138,36 @@ export class Studio {
     this.renderChips();
     this.bind();
     this.syncControls();
+  }
+
+  /** 问后端 AI 配好了没；没配好就默认走本地滤镜 */
+  async loadAiStatus() {
+    this.aiStatus = await fetchAiStatus();
+    if (this.aiStatus.styles?.length) {
+      this.els.aiStyles.innerHTML = this.aiStatus.styles
+        .map((s) => `<button type="button" class="chip" data-ai-style="${s.id}">${s.label}</button>`)
+        .join('');
+      if (!this.params.aiStyle) this.params.aiStyle = this.aiStatus.styles[0].id;
+    }
+    if (!this.aiStatus.ready) this.mode = 'local';
+    this.renderAiStatus();
+    this.syncControls();
+    this.applyMode();
+  }
+
+  renderAiStatus(message = null, kind = '') {
+    const el = this.els.aiStatus;
+    el.className = `hint ${kind}`;
+    if (message) {
+      el.textContent = message;
+      return;
+    }
+    const s = this.aiStatus;
+    if (!s) el.textContent = '正在检查 AI 服务…';
+    else if (s.offline) el.textContent = '没连上后端，AI 生成不可用。用 node server/server.mjs 启动即可。';
+    else if (!s.ready) el.textContent = '后端还没配 AI（当前是回环模式）。设置 GEMINI_API_KEY 或 OPENAI_API_KEY 后重启即可。';
+    else el.textContent = `照片会发给 ${s.label} 生成形象，可能要等十几秒。`;
+    this.els.generate.disabled = !s || s.offline;
   }
 
   renderChips() {
@@ -152,8 +218,8 @@ export class Studio {
       });
     }
     this.dialog.querySelector('[data-reset]').addEventListener('click', () => {
-      const { style } = this.params;
-      this.params = { ...defaultParams(), style };
+      const { style, aiStyle } = this.params;
+      this.params = { ...defaultParams(), style, aiStyle };
       this.applyStylePreset(style);
       this.syncControls();
       this.refresh();
@@ -190,6 +256,28 @@ export class Studio {
       { passive: false }
     );
 
+    this.els.modes.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-mode]');
+      if (!btn) return;
+      this.mode = btn.dataset.mode;
+      this.applyMode();
+      this.refresh();
+    });
+
+    this.els.aiStyles.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-ai-style]');
+      if (!btn) return;
+      this.params.aiStyle = btn.dataset.aiStyle;
+      this.syncControls();
+    });
+    this.els.generate.addEventListener('click', () => this.generate());
+    this.els.usePhoto.addEventListener('click', () => {
+      this.aiImage = null;
+      this.els.usePhoto.hidden = true;
+      this.renderAiStatus();
+      this.refresh();
+    });
+
     this.els.styles.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-style]');
       if (!btn) return;
@@ -225,6 +313,22 @@ export class Studio {
     this.params.saturation = p.saturation;
   }
 
+  /** 切换 AI / 本地滤镜的面板显隐 */
+  applyMode() {
+    const hasPhoto = !!this.source;
+    this.els.modes.hidden = !hasPhoto;
+    this.els.ai.hidden = !hasPhoto || this.mode !== 'ai';
+    this.els.controls.hidden = !hasPhoto || this.mode !== 'local';
+    this.els.frameControls.hidden = !hasPhoto;
+    this.els.privacy.textContent =
+      this.mode === 'ai'
+        ? 'AI 模式会把照片发到你自己配置的模型服务；本地滤镜模式则完全不出浏览器。'
+        : '照片只在你的浏览器里处理，不会上传';
+    for (const btn of this.els.modes.querySelectorAll('[data-mode]')) {
+      btn.classList.toggle('on', btn.dataset.mode === this.mode);
+    }
+  }
+
   syncControls() {
     for (const input of this.dialog.querySelectorAll('[data-p]')) {
       const key = input.dataset.p;
@@ -233,6 +337,8 @@ export class Studio {
     }
     for (const btn of this.dialog.querySelectorAll('[data-style]'))
       btn.classList.toggle('on', btn.dataset.style === this.params.style);
+    for (const btn of this.dialog.querySelectorAll('[data-ai-style]'))
+      btn.classList.toggle('on', btn.dataset.aiStyle === this.params.aiStyle);
     for (const btn of this.dialog.querySelectorAll('[data-species-key]'))
       btn.classList.toggle('on', btn.dataset.speciesKey === this.params.species);
     for (const btn of this.dialog.querySelectorAll('[data-palette]'))
@@ -259,32 +365,52 @@ export class Studio {
   }
 
   afterSourceLoaded() {
+    this.aiImage = null;
     this.els.drop.hidden = true;
     this.els.framer.hidden = false;
-    this.els.controls.hidden = false;
+    this.els.usePhoto.hidden = true;
     this.els.save.disabled = false;
     this.params.offsetX = 0;
     this.params.offsetY = 0;
+    this.params.zoom = 1.1;
+    this.applyMode();
+    this.renderAiStatus();
     this.refresh();
+  }
+
+  /** 当前用来做头像的图：生成过就用 AI 的结果，否则用原照片 */
+  activeSource() {
+    return this.mode === 'ai' && this.aiImage ? this.aiImage : this.source;
+  }
+
+  /** AI 模式下不套滤镜：生成前预览的就是要发出去的原图，生成后是模型的成品 */
+  isRaw() {
+    return this.mode === 'ai';
+  }
+
+  stylizeOptions(size) {
+    return {
+      size,
+      frame: this.params,
+      raw: this.isRaw(),
+      style: this.params.style,
+      levels: this.params.levels,
+      edge: this.params.edge,
+      saturation: this.params.saturation,
+      brightness: this.params.brightness,
+      cutout: !this.isRaw() && this.params.cutout,
+      feather: this.params.feather,
+    };
   }
 
   /** 参数变了就重算头像（合并到一帧里，拖动时不会卡） */
   refresh() {
-    if (!this.source || this._pending) return;
+    const src = this.activeSource();
+    if (!src || this._pending) return;
     this._pending = true;
     requestAnimationFrame(() => {
       this._pending = false;
-      const canvas = stylize(this.source, {
-        size: PREVIEW_SIZE,
-        frame: this.params,
-        style: this.params.style,
-        levels: this.params.levels,
-        edge: this.params.edge,
-        saturation: this.params.saturation,
-        brightness: this.params.brightness,
-        cutout: this.params.cutout,
-        feather: this.params.feather,
-      });
+      const canvas = stylize(src, this.stylizeOptions(PREVIEW_SIZE));
       const ctx = this.els.preview.getContext('2d');
       ctx.clearRect(0, 0, PREVIEW_SIZE, PREVIEW_SIZE);
       ctx.drawImage(canvas, 0, 0);
@@ -293,12 +419,63 @@ export class Studio {
     });
   }
 
+  /** 把取好景的照片发给后端生成 */
+  async generate() {
+    if (!this.source || this.generating) return;
+    this.setBusy(true);
+    this.renderAiStatus('正在生成，通常十几秒…', '');
+
+    try {
+      // 发原照片的取景结果（不加蒙版、不做风格化），让模型看到干净的方图
+      const cropped = stylize(this.source, {
+        size: UPLOAD_SIZE,
+        frame: this.aiImage ? { zoom: 1.1, offsetX: 0, offsetY: 0, rotation: 0 } : this.params,
+        raw: true,
+        mask: false,
+      });
+      const image = cropped.toDataURL('image/jpeg', 0.92);
+
+      const result = await generateCharacter({
+        image,
+        style: this.params.aiStyle,
+        species: this.params.species,
+        extra: this.els.extra.value.trim(),
+      });
+
+      this.aiImage = await loadImage(result);
+      // 生成结果是完整方图，取景参数重置，让滑块作用在新图上
+      this.params.zoom = 1;
+      this.params.offsetX = 0;
+      this.params.offsetY = 0;
+      this.params.rotation = 0;
+      this.els.usePhoto.hidden = false;
+      this.syncControls();
+      this.refresh();
+      this.renderAiStatus('生成好了！可以拖动取景，或者换个画风再生成一次。', 'ok');
+      this.character.burst('heart', 3);
+    } catch (err) {
+      console.error(err);
+      this.renderAiStatus(`生成失败：${err.message}。可以再试一次，或者切到本地滤镜。`, 'bad');
+    } finally {
+      this.setBusy(false);
+    }
+  }
+
+  setBusy(busy) {
+    this.generating = busy;
+    this.els.busy.hidden = !busy;
+    this.els.generate.disabled = busy;
+    this.els.generate.textContent = busy ? '生成中…' : '✨ 生成形象';
+  }
+
   /** 打开工作室；传入已有伙伴则进入编辑模式 */
   open(character = null) {
     this.editingId = character?.id || null;
     if (character) {
       this.params = { ...defaultParams(), ...(character.source || {}), species: character.species, palette: character.palette };
       this.headUrl = character.head;
+      this.source = null;
+      this.aiImage = null;
       this.els.name.value = character.name || '';
       this.character.setSpecies(character.species);
       this.character.setPalette(character.palette);
@@ -306,21 +483,23 @@ export class Studio {
       // 原图没留存，只能在已有头像上继续调身体 / 名字
       this.els.drop.hidden = true;
       this.els.framer.hidden = true;
-      this.els.controls.hidden = true;
       this.els.save.disabled = false;
     } else {
-      this.params = defaultParams();
+      const aiStyle = this.params.aiStyle;
+      this.params = { ...defaultParams(), aiStyle };
       this.source = null;
+      this.aiImage = null;
       this.headUrl = null;
       this.els.name.value = '';
+      this.els.extra.value = '';
       this.els.drop.hidden = false;
       this.els.framer.hidden = true;
-      this.els.controls.hidden = true;
       this.els.save.disabled = true;
       this.character.setHead(null);
       this.character.setSpecies(this.params.species);
       this.character.setPalette(this.params.palette);
     }
+    this.applyMode();
     this.syncControls();
     this.character.setState('idle');
     if (!this.dialog.open) this.dialog.showModal();
@@ -329,20 +508,8 @@ export class Studio {
   save() {
     // 导出用更高分辨率重跑一次
     let head = this.headUrl;
-    if (this.source) {
-      const canvas = stylize(this.source, {
-        size: EXPORT_SIZE,
-        frame: this.params,
-        style: this.params.style,
-        levels: this.params.levels,
-        edge: this.params.edge,
-        saturation: this.params.saturation,
-        brightness: this.params.brightness,
-        cutout: this.params.cutout,
-        feather: this.params.feather,
-      });
-      head = canvasToDataURL(canvas);
-    }
+    const src = this.activeSource();
+    if (src) head = canvasToDataURL(stylize(src, this.stylizeOptions(EXPORT_SIZE)));
     if (!head) return;
 
     const name = this.els.name.value.trim() || defaultName(this.params.species);
@@ -351,6 +518,7 @@ export class Studio {
       species: this.params.species,
       palette: this.params.palette,
       head,
+      madeBy: this.mode === 'ai' && this.aiImage ? 'ai' : 'local',
       source: { ...this.params },
     };
 
@@ -366,6 +534,15 @@ export class Studio {
   }
 }
 
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('生成的图片读不了'));
+    img.src = src;
+  });
+}
+
 function defaultParams() {
   return {
     zoom: 1.1,
@@ -373,6 +550,7 @@ function defaultParams() {
     offsetX: 0,
     offsetY: 0,
     style: 'cartoon',
+    aiStyle: 'cozy',
     levels: STYLE_PRESETS.cartoon.levels,
     edge: STYLE_PRESETS.cartoon.edge,
     saturation: STYLE_PRESETS.cartoon.saturation,

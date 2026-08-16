@@ -186,6 +186,7 @@ export function stylize(src, options = {}) {
     cutoutTolerance = 46,
     feather = 0.45,
     mask = true,
+    raw = false,     // 只取景，不做风格化（AI 生成的图已经是成品，别再滤镜一遍）
   } = options;
 
   const preset = STYLE_PRESETS[style] || STYLE_PRESETS.cartoon;
@@ -214,6 +215,12 @@ export function stylize(src, options = {}) {
   const data = image.data;
 
   if (cutout) removeBackground(data, size, size, cutoutTolerance);
+
+  if (raw) {
+    if (mask) applyCircleMask(data, size, feather);
+    ctx.putImageData(image, 0, 0);
+    return canvas;
+  }
 
   // 平滑一份副本用于「填色」和「找边」，原图只用来保留细节
   const smoothed = new Uint8ClampedArray(data);
@@ -262,25 +269,26 @@ export function stylize(src, options = {}) {
     }
   }
 
-  // 3. 圆形羽化蒙版：头像要贴到角色的圆脑袋上。
-  //    羽化越强，照片背景越是「化」进角色的头里，不会像戴了个头盔。
-  if (mask) {
-    const cx = size / 2;
-    const cy = size / 2;
-    const rOut = size * 0.5;
-    const rIn = rOut * (1 - 0.09 - 0.32 * clamp(feather, 0, 1));
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const i = (y * size + x) * 4;
-        const d = Math.hypot(x - cx, y - cy);
-        if (d >= rOut) data[i + 3] = 0;
-        else if (d > rIn) data[i + 3] *= 1 - (d - rIn) / (rOut - rIn);
-      }
-    }
-  }
+  // 3. 圆形羽化蒙版：头像要贴到角色的圆脑袋上
+  if (mask) applyCircleMask(data, size, feather);
 
   ctx.putImageData(image, 0, 0);
   return canvas;
+}
+
+/** 圆形羽化：羽化越强，照片背景越是「化」进角色的头里，不会像戴了个头盔 */
+function applyCircleMask(data, size, feather) {
+  const c = size / 2;
+  const rOut = size * 0.5;
+  const rIn = rOut * (1 - 0.09 - 0.32 * clamp(feather, 0, 1));
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4;
+      const d = Math.hypot(x - c, y - c);
+      if (d >= rOut) data[i + 3] = 0;
+      else if (d > rIn) data[i + 3] *= 1 - (d - rIn) / (rOut - rIn);
+    }
+  }
 }
 
 /** 导出成尽量小的 dataURL，方便存进 localStorage */

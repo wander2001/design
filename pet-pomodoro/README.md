@@ -6,28 +6,34 @@
 
 ## 跑起来
 
-因为用了 ES Module，需要一个本地服务器（直接双击 `index.html` 会被浏览器的模块跨域策略拦住）：
-
 ```bash
 cd pet-pomodoro
-python3 -m http.server 8000
-# 或者 npx http-server -p 8000 -c-1
+GEMINI_API_KEY=你的key npm start      # 或者 node server/server.mjs
 ```
 
-然后打开 http://localhost:8000 。
+然后打开 http://localhost:8787 。不填 key 也能跑，只是 AI 生成会退化成回环模式，本地滤镜照常可用。
 
-没有构建步骤、没有依赖、没有后端。整个项目就是静态文件，扔到任何静态托管（GitHub Pages / Vercel / Netlify）都能直接跑。
+没有 npm 依赖（后端是零依赖的 Node 原生 http）。只想要本地滤镜版、不要 AI 的话，用任意静态服务器托管这个目录也行（`python3 -m http.server`），前端会自动检测到没有后端并切到本地滤镜。
+
+### 接哪家 AI
+
+| 环境变量 | 说明 |
+|---|---|
+| `GEMINI_API_KEY` | Google Gemini 图像模型（默认 `gemini-2.5-flash-image`，可用 `GEMINI_IMAGE_MODEL` 换）。**推荐**，图生图保特征效果最好 |
+| `OPENAI_API_KEY` | OpenAI 图像编辑（默认 `gpt-image-1`，可用 `OPENAI_IMAGE_MODEL` 换） |
+| `PET_AI_PROVIDER` | 手动指定 `gemini` / `openai` / `mock`。不设就按 key 自动挑 |
+| `PORT` | 端口，默认 8787 |
+
+想接国内的模型（豆包 / 通义 / 即梦）或者 Replicate、fal：在 `server/server.mjs` 里照着 `generateWithGemini` 加一个函数，登记到 `PROVIDERS` 就行，前端不用改。
 
 ## 它做了什么
 
-**1. 照片 → 卡通头像**（`js/cartoonify.js`，纯 Canvas，本地处理，照片不出浏览器）
+**1. 照片 → 可爱形象**，两种做法，工作室里随时切换：
 
-```
-取景裁切 → 可选抠背景 → 保边平滑 → 色阶量化 + 提饱和 → Sobel 描边 → 圆形羽化
-```
+- **AI 生成**（`server/server.mjs` + `js/ai.js`）：照片经后端转发给图像模型重画成温馨可爱的形象。四种画风：温馨可爱 / 毛绒手办 / 绘本水彩 / 简笔贴纸，还能补一句「戴顶小黄帽」之类的要求。提示词里反复强调保留毛色、花纹、脸型、眼镜项圈等特征，免得生成出来不是自家那只。key 只存在后端，前端拿不到。
+- **本地滤镜**（`js/cartoonify.js`）：纯 Canvas，照片不出浏览器。管线是 `取景裁切 → 可选抠背景 → 保边平滑 → 色阶量化 + 提饱和 → Sobel 描边 → 圆形羽化`，四种画风：卡通 / 手绘 / 像素 / 厚涂。
 
-四种画风：卡通 / 手绘 / 像素 / 厚涂。可调缩放、旋转、色阶、描边、饱和、亮度、柔边。
-「柔边」把照片背景化进角色的头里，不调的话背景会像个头盔。背景是纯色的话，勾「去掉背景」效果最好。
+两种模式都能拖动取景、调「柔边」——柔边把背景化进角色的头里，不调的话会像戴了个头盔。
 
 **2. 卡通头像 → 会动的角色**（`js/character.js`）
 
@@ -48,6 +54,8 @@ python3 -m http.server 8000
 | `sleep` | 暂停超过 90 秒 | 歪头打瞌睡，冒 Zzz |
 | `cheer` | 完成一个番茄 | 蹦起来 + 彩带 |
 
+另外点一下伙伴就是「摸摸头」：它会开心地弹一下、冒爱心、扭头看你。
+
 身体有猫 / 狗 / 人三种（人是毛线帽版，没有耳朵尾巴），六种毛色。
 
 **3. 番茄钟**（`js/timer.js`）
@@ -67,33 +75,25 @@ python3 -m http.server 8000
 ```
 pet-pomodoro/
 ├── index.html          页面骨架
+├── package.json        只有一个 npm start
+├── server/server.mjs   静态托管 + AI 生成代理（零依赖，key 藏在这一层）
 ├── css/app.css         样式（暖色调，跟随系统深浅色，手机适配）
 └── js/
     ├── main.js         主线：把各模块串起来
-    ├── cartoonify.js   照片 → 卡通头像的图像管线
+    ├── ai.js           调后端生成接口的薄封装
+    ├── cartoonify.js   本地滤镜管线 + 圆形羽化
     ├── character.js    SVG 骨架 + 程序化动画
-    ├── studio.js       形象工作室 UI
+    ├── studio.js       形象工作室 UI（AI / 本地滤镜双模式）
     ├── timer.js        番茄钟状态机
     ├── store.js        本地存档
     └── audio.js        提示音合成
 ```
 
-## 想换成 AI 重绘？
-
-目前的风格化是本地滤镜，好处是免费、离线、隐私、即时；缺点是它做的是「卡通滤镜」，不是「AI 重画一个角色」。
-
-要换成 AI 生图，只需要替换 `cartoonify.js` 里的 `stylize()` 一个函数：
-
-```js
-// 输入：ImageBitmap / HTMLImageElement + 参数
-// 输出：一张带 alpha 的方形 canvas
-export async function stylize(src, options) { ... }
-```
-
-上层（取景、圆形蒙版、装配到角色身体、存档）都不用改。注意 API key 不能放在前端，需要加一层自己的后端代理。
+后端只有两个接口：`GET /api/status`（AI 配好没、有哪些画风）和 `POST /api/generate`（照片 + 画风 → 生成图）。
 
 ## 已知取舍
 
-- 头像是「照片贴在圆脑袋上」，不是重新生成的立体角色，所以照片本身构图越接近正脸大头照，效果越好
-- 抠背景是泛洪填充，复杂 / 渐变背景抠不干净，这种情况建议直接用「柔边」
+- 生成的是**头像**，贴在程序画的圆脑袋上，不是整只 AI 重绘的立体角色。好处是身体动画可控、成本只有一次生成；代价是照片构图越接近正脸大头照效果越好
+- AI 模式每次生成都要调一次模型（十几秒 + 按次计费），本地滤镜是即时且免费的
+- 抠背景是泛洪填充，复杂 / 渐变背景抠不干净，这种情况直接用「柔边」
 - 眨眼动画没做在照片上（会破坏原图五官），表情靠身体动作和特效表达

@@ -1,0 +1,13 @@
+{
+  "name": "pet-pomodoro",
+  "version": "1.0.0",
+  "description": "把上传的照片变成会动的番茄钟伙伴",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
