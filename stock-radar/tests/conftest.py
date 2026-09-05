@@ -177,6 +177,7 @@ def ctx(http, tmp_path):
     from stock_radar.edgar import Edgar
 
     config = Config.load(None)
+    config.data["sec"]["user_agent"] = "Test Runner tests@example.invalid"
     config.data["watchlist"]["tickers"] = ["AAPL", "NVDA"]
     config.data["watchlist"]["funds"] = [{"name": "Berkshire Hathaway", "cik": "0001067983"}]
     config.data["sources"]["news"]["feeds"] = [

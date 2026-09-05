@@ -124,6 +124,33 @@ class TestRender:
         assert "所有板块今日均无新增内容" in render_html(empty)
 
 
+class TestUserAgentGuard:
+    """SEC throttles contactless clients, so a bad UA must be loud, not silent."""
+
+    def test_missing_user_agent_is_reported(self, patched_run, ctx):
+        ctx.config.data["sec"]["user_agent"] = ""
+        report, _ = patched_run(only=["news"])
+        ua = next(s for s in report.statuses if s.name == "sec.user_agent")
+        assert not ua.ok and "未设置" in ua.message
+
+    def test_placeholder_user_agent_is_reported(self, patched_run, ctx, monkeypatch):
+        monkeypatch.delenv("SEC_USER_AGENT", raising=False)
+        ctx.config.data["sec"]["user_agent"] = "Your Name your-email@example.com"
+        report, _ = patched_run(only=["news"])
+        ua = next(s for s in report.statuses if s.name == "sec.user_agent")
+        assert not ua.ok and "占位值" in ua.message
+
+    def test_env_var_overrides_the_placeholder(self, ctx, monkeypatch):
+        monkeypatch.setenv("SEC_USER_AGENT", "Real Person me@example.invalid")
+        ctx.config.data["sec"]["user_agent"] = "Your Name your-email@example.com"
+        assert ctx.config.user_agent == "Real Person me@example.invalid"
+        assert ctx.config.user_agent_warning() == ""
+
+    def test_good_user_agent_adds_no_status(self, patched_run, ctx):
+        report, _ = patched_run(only=["news"])
+        assert not any(s.name == "sec.user_agent" for s in report.statuses)
+
+
 class TestPartialFailureReporting:
     """A section whose sub-sources all failed must not render as a quiet day."""
 
