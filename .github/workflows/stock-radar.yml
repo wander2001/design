@@ -46,6 +46,19 @@ jobs:
           key: stock-radar-state-${{ github.run_id }}
           restore-keys: stock-radar-state-
 
+      # config.yaml is the user's own committed config; fall back to the example so a
+      # fresh clone still produces a report instead of crashing on a missing file.
+      - name: Pick config
+        id: cfg
+        run: |
+          if [[ -f config.yaml ]]; then
+            echo "path=config.yaml" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::没有 config.yaml，本次用 config.example.yaml 的默认关注列表。" \
+                 "提交一份自己的 config.yaml 才会按你的 watchlist 跑。"
+            echo "path=config.example.yaml" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run digest
         env:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
@@ -59,7 +72,7 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         run: |
           python -m stock_radar run \
-            --config config.yaml \
+            --config "${{ steps.cfg.outputs.path }}" \
             ${{ inputs.date && format('--date {0}', inputs.date) || '' }} \
             ${{ inputs.only && format('--only {0}', inputs.only) || '' }}
 

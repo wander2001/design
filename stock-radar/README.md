@@ -52,7 +52,9 @@ macOS 装 launchd 任务，Linux 写 crontab，默认工作日 7:30 本地时间
 ### 每天自动跑（GitHub Actions）
 
 仓库已带 `.github/workflows/stock-radar.yml`，工作日盘前触发，报告出现在运行的 Summary 页和 Artifact 里。
-只要在 **Settings → Secrets and variables → Actions** 加 `SEC_USER_AGENT`（想推送再加对应 secret）。
+1. 把改好的 `config.yaml` 提交进仓库——**里面不含任何密钥**（只写环境变量的名字），
+   不提交的话 Actions 会退回用 `config.example.yaml` 的默认关注列表；
+2. 在 **Settings → Secrets and variables → Actions** 加 `SEC_USER_AGENT`（想推送再加对应 secret）。
 跨天去重的状态库通过 `actions/cache` 保存。注意上面的表：这条路上 SEC 那两个板块大概率拿不到数据。
 
 ## 配置要点
