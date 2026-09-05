@@ -1,0 +1,90 @@
+name: Stock Radar (每日股票信息)
+
+on:
+  schedule:
+    # 07:30 America/New_York（盘前）。GitHub 的 cron 只认 UTC，
+    # 夏令时 11:30 UTC / 冬令时 12:30 UTC，所以两条都排，脚本自身按天去重。
+    - cron: "30 11 * * 1-5"
+    - cron: "30 12 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "回补指定日期 (YYYY-MM-DD)，留空跑今天"
+        required: false
+      only:
+        description: "只跑部分采集器: congress,insiders,funds,news"
+        required: false
+
+concurrency:
+  group: stock-radar
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: stock-radar
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: stock-radar/requirements.txt
+
+      - run: pip install -r requirements.txt
+
+      # 跨天去重的 sqlite 状态库。key 带 run_id 保证每次都能写新缓存，
+      # restore-keys 让下一次拿到最近一份。
+      - name: Restore state
+        uses: actions/cache@v4
+        with:
+          path: stock-radar/.stock-radar
+          key: stock-radar-state-${{ github.run_id }}
+          restore-keys: stock-radar-state-
+
+      # config.yaml is the user's own committed config; fall back to the example so a
+      # fresh clone still produces a report instead of crashing on a missing file.
+      - name: Pick config
+        id: cfg
+        run: |
+          if [[ -f config.yaml ]]; then
+            echo "path=config.yaml" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::没有 config.yaml，本次用 config.example.yaml 的默认关注列表。" \
+                 "提交一份自己的 config.yaml 才会按你的 watchlist 跑。"
+            echo "path=config.example.yaml" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run digest
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          QUIVER_API_KEY: ${{ secrets.QUIVER_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STOCK_RADAR_WEBHOOK: ${{ secrets.STOCK_RADAR_WEBHOOK }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: |
+          python -m stock_radar run \
+            --config "${{ steps.cfg.outputs.path }}" \
+            ${{ inputs.date && format('--date {0}', inputs.date) || '' }} \
+            ${{ inputs.only && format('--only {0}', inputs.only) || '' }}
+
+      - name: Job summary
+        if: always()
+        run: cat out/latest.md >> "$GITHUB_STEP_SUMMARY" || echo "本次没有生成报告" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-radar-${{ github.run_id }}
+          path: stock-radar/out/
+          retention-days: 30
+          if-no-files-found: warn

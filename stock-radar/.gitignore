@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# 生成的报告和跨天去重的状态库
+out/
+sample-output/
+.stock-radar/
+.cache/
+stock-radar.log
+
+# config.yaml 本身不含任何密钥（只写环境变量的名字），所以是可以提交的——
+# 用 GitHub Actions 跑就必须提交它。默认不忽略。

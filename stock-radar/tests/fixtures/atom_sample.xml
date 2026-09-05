@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>SEC Press</title>
+  <entry>
+    <title>SEC Charges Firm With Disclosure Failures</title>
+    <link rel="alternate" href="https://www.sec.gov/news/press-release/2026-100"/>
+    <updated>2026-09-03T14:00:00Z</updated>
+    <summary>The Securities and Exchange Commission today announced charges.</summary>
+  </entry>
+</feed>

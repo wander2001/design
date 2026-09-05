@@ -1,0 +1,109 @@
+# ===== Stock Radar 配置 =====
+# 复制成 config.yaml 后修改：  python -m stock_radar init
+
+watchlist:
+  # 关注的股票代码。高管买卖(Form 4)、8-K 公告、个股新闻默认只跟踪这些。
+  tickers: [AAPL, MSFT, NVDA, GOOGL, AMZN, META, TSLA, AVGO, AMD, PLTR]
+
+  # 出现在新闻标题里就加权的关键词（公司名、主题都行）
+  keywords: ["Federal Reserve", "interest rate", "tariff", "AI chip", "earnings"]
+
+  # 想重点盯的议员（写全名，会额外加分；留空则不额外加权）
+  people: []
+
+  # 要跟踪 13F 持仓变化的基金。CIK 用 `python -m stock_radar find-fund <名字>` 查，
+  # 例如 `python -m stock_radar find-fund berkshire`，别手抄，抄错就静默没数据。
+  funds:
+    - {name: "Berkshire Hathaway", cik: "0001067983"}
+    - {name: "Scion Asset Management", cik: "0001649339"}
+    # - {name: "Pershing Square", cik: "查一下"}
+    # - {name: "Bridgewater Associates", cik: "查一下"}
+    # - {name: "ARK Investment Management", cik: "查一下"}
+
+sec:
+  # 必填。SEC 要求自动化客户端带上可联系到你的 User-Agent，否则会被限流/封禁。
+  # 也可以用环境变量 SEC_USER_AGENT 代替。
+  user_agent: "Your Name your-email@example.com"
+  rate_per_sec: 5.0   # SEC 上限 10/s，留余量
+
+sources:
+  congress:
+    enabled: true
+    # 全部跑一遍再合并（两院各管一半，不是"谁先出数据谁赢"）：
+    #   house_clerk   众议院官方：年度 ZIP 索引 → PTR PDF → 解析出真实交易明细
+    #   senate_efd    参议院官方 eFD：同意条款 + CSRF → 电子报告表格
+    #   quiver        可选增强，需要环境变量 QUIVER_API_KEY
+    #   stockwatcher  旧的社区镜像；公开访问已关闭，只有自建镜像才填 *_mirror_url
+    providers: [house_clerk, senate_efd]
+    lookback_days: 45      # STOCK Act 允许最多延迟 45 天披露
+    min_amount_usd: 1000   # PTR 的金额区间从 $1,001 起
+    stocks_only: true      # 只报股票/期权，滤掉国债、市政债这类噪音
+    watchlist_only: false  # true = 只报关注的票/议员
+    max_filings: 80        # 单次最多抓取解析多少份申报（解析结果会缓存）
+    # 自建镜像才需要填，留空则用官方源
+    house_mirror_url: ""
+    senate_mirror_url: ""
+
+  insiders:
+    enabled: true
+    lookback_days: 3
+    scope: watchlist       # watchlist（只看关注的票，快） | all（全市场，慢很多）
+    codes: [P, S]          # P=公开市场买入 S=卖出；加 A(授予) M(行权) 会非常吵
+    min_value_usd: 100000
+    max_filings: 400       # scope=all 时的抓取上限
+    workers: 6
+
+  funds:
+    enabled: true
+    lookback_days: 7
+    top_n_changes: 12      # 每只基金最多报几条持仓变动
+    min_value_usd: 5000000
+
+  news:
+    enabled: true
+    lookback_hours: 30
+    max_items: 40
+    watchlist_only: false
+    include_8k: true       # 关注股票的 8-K 重大事件公告
+    per_ticker_feed: "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
+    feeds:
+      - {name: "CNBC Markets", url: "https://www.cnbc.com/id/20910258/device/rss/rss.html"}
+      - {name: "CNBC Top News", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html"}
+      - {name: "Yahoo Finance", url: "https://finance.yahoo.com/news/rssindex"}
+      - {name: "MarketWatch Top", url: "https://feeds.content.dowjones.io/public/rss/mw_topstories"}
+      - {name: "SEC Press", url: "https://www.sec.gov/news/pressreleases.rss"}
+      - {name: "Federal Reserve", url: "https://www.federalreserve.gov/feeds/press_all.xml"}
+
+output:
+  dir: out
+  formats: [markdown, html, json]
+  language: zh          # zh | en
+  keep_history: true    # 除 latest.* 外再存一份按日期命名的
+
+state:
+  path: .stock-radar/state.db   # 跨天去重用，别删
+
+cache:
+  dir: ""               # 填个目录可缓存 HTTP 响应，调试时很省事
+  ttl_seconds: 0
+
+# 推送。配置里只写"环境变量的名字"，真正的密钥放环境变量/GitHub Secrets。
+notify:
+  slack:
+    enabled: false
+    webhook_env: SLACK_WEBHOOK_URL
+  telegram:
+    enabled: false
+    token_env: TELEGRAM_BOT_TOKEN
+    chat_id_env: TELEGRAM_CHAT_ID
+  webhook:
+    enabled: false
+    url_env: STOCK_RADAR_WEBHOOK
+  email:
+    enabled: false
+    host_env: SMTP_HOST
+    port: 587
+    user_env: SMTP_USER
+    password_env: SMTP_PASSWORD
+    from_addr: ""
+    to_addrs: []

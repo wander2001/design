@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<informationTable xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable">
+  <infoTable><nameOfIssuer>APPLE INC</nameOfIssuer><titleOfClass>COM</titleOfClass><cusip>037833100</cusip>
+    <value>84200000</value><shrsOrPrnAmt><sshPrnamt>400000000</sshPrnamt><sshPrnamtType>SH</sshPrnamtType></shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion><votingAuthority><Sole>400000000</Sole><Shared>0</Shared><None>0</None></votingAuthority></infoTable>
+  <infoTable><nameOfIssuer>BANK OF AMERICA CORP</nameOfIssuer><titleOfClass>COM</titleOfClass><cusip>060505104</cusip>
+    <value>41100000</value><shrsOrPrnAmt><sshPrnamt>1032852006</sshPrnamt><sshPrnamtType>SH</sshPrnamtType></shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion><votingAuthority><Sole>1032852006</Sole><Shared>0</Shared><None>0</None></votingAuthority></infoTable>
+  <infoTable><nameOfIssuer>CHUBB LIMITED</nameOfIssuer><titleOfClass>COM</titleOfClass><cusip>H1467J104</cusip>
+    <value>6720000</value><shrsOrPrnAmt><sshPrnamt>27033784</sshPrnamt><sshPrnamtType>SH</sshPrnamtType></shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion><votingAuthority><Sole>27033784</Sole><Shared>0</Shared><None>0</None></votingAuthority></infoTable>
+</informationTable>
