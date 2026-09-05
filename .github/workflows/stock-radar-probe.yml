@@ -118,15 +118,6 @@ jobs:
           echo "================ 真实数据生成的报告 ================"
           cat probe-out/latest.md
 
-      # Printed last so the sections that matter sit at the tail of the job log.
-      - name: 国会板块与数据源状态
-        if: always()
-        run: |
-          echo "########## 国会议员交易 ##########"
-          sed -n '/国会议员交易/,/公司高管买卖/p' probe-out/latest.md | head -60 || true
-          echo "########## 数据源状态 ##########"
-          sed -n '/数据源状态/,$p' probe-out/latest.md || true
-
       - name: Upload probe output
         if: always()
         uses: actions/upload-artifact@v4
@@ -138,3 +129,12 @@ jobs:
             stock-radar/probe-out/
           retention-days: 14
           if-no-files-found: warn
+
+      # Last step on purpose: these sections then sit at the tail of the job log.
+      - name: 国会板块与数据源状态
+        if: always()
+        run: |
+          echo "########## 国会议员交易 ##########"
+          sed -n '/国会议员交易/,/公司高管买卖/p' probe-out/latest.md | head -60 || true
+          echo "########## 数据源状态 ##########"
+          sed -n '/数据源状态/,$p' probe-out/latest.md || true

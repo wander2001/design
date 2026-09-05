@@ -187,3 +187,66 @@ class TestSecBlockDetection:
         error = HttpError("https://www.sec.gov/x", 403, hint)
         assert "403" in str(error) and "频率超限" in str(error)
         assert error.hint == hint
+
+
+class TestSenateReportTable:
+    """The eFD table has both 'Asset Type' and 'Type'; picking wrong mislabels every trade."""
+
+    HEADERS = ["#", "Transaction Date", "Owner", "Ticker", "Asset Name", "Asset Type",
+               "Type", "Amount", "Comment"]
+
+    def page(self, rows: list[list[str]]) -> str:
+        head = "".join(f"<th>{h}</th>" for h in self.HEADERS)
+        body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>" for row in rows)
+        return (
+            "<html><head><style>td{color:red}</style>"
+            '<script>var x = "<td>not a cell</td>";</script></head>'
+            f"<body><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></body></html>"
+        )
+
+    def transactions(self, rows):
+        from stock_radar.senate_efd import EfdSession, SenateFiling
+
+        session = EfdSession(user_agent="test")
+        filing = SenateFiling("SAM ", "SENATOR", "Senator", "PTR",
+                              "https://efdsearch.senate.gov/search/view/ptr/abc/", date(2026, 9, 1))
+
+        class Response:
+            text = self.page(rows)
+            ok = True
+
+            def raise_for_status(self):
+                pass
+
+        session.session.get = lambda *a, **k: Response()
+        return session.transactions(filing)
+
+    def test_direction_comes_from_type_not_asset_type(self):
+        rows = [["1", "08/28/2026", "Spouse", "AAPL", "Apple Inc. - Common Stock",
+                 "Stock", "Sale (Full)", "$100,001 - $250,000", "--"]]
+        txn = self.transactions(rows)[0]
+        assert txn.action == "sale_(full)"   # from the Type column
+        assert txn.asset_type == "Stock"     # from the Asset Type column
+        assert txn.ticker == "AAPL"
+        assert txn.owner == "Spouse"
+        assert txn.traded == date(2026, 8, 28)
+        assert (txn.amount_low, txn.amount_high) == (100001.0, 250000.0)
+
+    def test_missing_ticker_is_blank_not_a_dash(self):
+        rows = [["1", "08/29/2026", "Self", "--", "US Treasury Bill",
+                 "Corporate Bond", "Purchase", "$1,001 - $15,000", ""]]
+        txn = self.transactions(rows)[0]
+        assert txn.ticker == "" and txn.asset_type == "Corporate Bond"
+
+    def test_script_content_is_not_mistaken_for_a_row(self):
+        rows = [["1", "08/28/2026", "Self", "NVDA", "NVIDIA", "Stock",
+                 "Purchase", "$1,001 - $15,000", ""]]
+        assert len(self.transactions(rows)) == 1
+
+    def test_paper_filing_returns_nothing(self):
+        from stock_radar.senate_efd import EfdSession, SenateFiling
+
+        session = EfdSession(user_agent="test")
+        paper = SenateFiling("A", "B", "Senator", "PTR",
+                             "https://efdsearch.senate.gov/search/view/paper/x/", date(2026, 9, 1))
+        assert session.transactions(paper) == []

@@ -208,6 +208,16 @@ class EfdSession:
                 continue
 
             def column(*names: str) -> int:
+                """Index of the first matching header.
+
+                Exact matches win over substring ones: the table has both "Asset Type"
+                and "Type", and a substring search for "type" picks the wrong one,
+                which silently turns every transaction's direction into its asset class.
+                """
+                for name in names:
+                    for idx, header in enumerate(headers):
+                        if header == name:
+                            return idx
                 for name in names:
                     for idx, header in enumerate(headers):
                         if name in header:
@@ -215,11 +225,12 @@ class EfdSession:
                 return -1
 
             idx_date = column("transaction date", "date")
+            # "Transaction Date" would also satisfy a bare "type" lookup on some layouts.
             idx_owner = column("owner")
             idx_ticker = column("ticker")
             idx_asset = column("asset name", "asset")
             idx_type = column("asset type")
-            idx_action = column("type")
+            idx_action = column("type", "transaction type")
             idx_amount = column("amount")
             idx_comment = column("comment")
 
