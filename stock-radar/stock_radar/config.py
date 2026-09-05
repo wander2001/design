@@ -138,9 +138,31 @@ class Config:
                 out.append({"name": str(f.get("name") or f["cik"]), "cik": str(f["cik"]).zfill(10)})
         return out
 
+    # Shipped placeholders that must never reach SEC as a real contact address.
+    _UA_PLACEHOLDERS = ("your-email@example.com", "your name", "set sec_user_agent")
+
     @property
     def user_agent(self) -> str:
-        return self.get("sec.user_agent") or os.environ.get("SEC_USER_AGENT", "")
+        configured = str(self.get("sec.user_agent") or "").strip()
+        if configured and not self.user_agent_looks_placeholder(configured):
+            return configured
+        return os.environ.get("SEC_USER_AGENT", "").strip() or configured
+
+    @classmethod
+    def user_agent_looks_placeholder(cls, value: str) -> bool:
+        lowered = value.lower()
+        return any(marker in lowered for marker in cls._UA_PLACEHOLDERS)
+
+    def user_agent_warning(self) -> str:
+        """Empty when the UA is usable; otherwise why SEC is likely to reject it."""
+        ua = self.user_agent
+        if not ua:
+            return "sec.user_agent 未设置（也没有 SEC_USER_AGENT 环境变量）；SEC 会限流甚至封禁匿名请求"
+        if self.user_agent_looks_placeholder(ua):
+            return f"sec.user_agent 还是模板占位值 {ua!r}；请改成你自己的姓名+邮箱"
+        if "@" not in ua and "http" not in ua.lower():
+            return f"sec.user_agent {ua!r} 里没有邮箱或网址，SEC 要求能联系到请求方"
+        return ""
 
     def secret(self, dotted_env_key: str) -> str:
         """Read a secret by indirection: config holds the env var *name*, not the value."""

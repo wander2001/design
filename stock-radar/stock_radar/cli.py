@@ -96,6 +96,17 @@ def cmd_find_fund(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_probe(args: argparse.Namespace) -> int:
+    from .probe import main as probe_main
+
+    config = Config.load(args.config) if Path(args.config).exists() else Config.load(None)
+    return probe_main(
+        config,
+        today=date.fromisoformat(args.date) if args.date else None,
+        verbose=args.verbose,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="stock-radar",
@@ -118,6 +129,11 @@ def main(argv: list[str] | None = None) -> int:
     p_init.add_argument("path", nargs="?", default="config.yaml")
     p_init.add_argument("--force", action="store_true")
     p_init.set_defaults(func=cmd_init)
+
+    p_probe = sub.add_parser("probe", help="体检：逐个打真实数据源，检查格式假设是否还成立")
+    p_probe.add_argument("-c", "--config", default="config.yaml")
+    p_probe.add_argument("--date", help="以指定日期运行 (YYYY-MM-DD)")
+    p_probe.set_defaults(func=cmd_probe)
 
     p_find = sub.add_parser("find-fund", help="按名称在 EDGAR 查询基金的 CIK")
     p_find.add_argument("name", help="基金名称关键字，如 berkshire")

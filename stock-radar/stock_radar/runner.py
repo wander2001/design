@@ -49,6 +49,10 @@ def run(
 
     items: list[Item] = []
     statuses: list[SourceStatus] = []
+    ua_warning = config.user_agent_warning()
+    if ua_warning:
+        log.warning("%s", ua_warning)
+        statuses.append(SourceStatus("sec.user_agent", False, 0, ua_warning))
     try:
         for collector in build_collectors(state):
             if only and collector.name not in only:
