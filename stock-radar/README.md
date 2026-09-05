@@ -1,15 +1,30 @@
 # Stock Radar · 每日股票信息雷达
 
-每天自动汇总四类信息，生成一份 Markdown / HTML / JSON 报告，并可推送到 Slack、Telegram、邮箱或自定义 Webhook：
+每天自动汇总四类信息，生成 Markdown / HTML / JSON 报告，可推送到 Slack、Telegram、邮箱或自定义 Webhook。
+**全部来自官方或公开披露源，默认零 API key、零付费。**
 
 | 板块 | 内容 | 数据来源 | 时效 |
 | --- | --- | --- | --- |
-| 🏛️ 国会议员交易 | 参议员 / 众议员及其配偶的股票买卖 | House / Senate Stock Watcher（免费镜像）、Quiver（可选 API key）、众议院官方索引（兜底） | 法律允许延迟最多 45 天披露 |
+| 🏛️ 国会议员交易 | 议员及配偶/子女的每一笔买卖：标的、代码、方向、金额区间、交易日、披露延迟 | **众议院书记官办公室**年度索引 + PTR 原始 PDF；**参议院 eFD** 电子报告 | 法律允许最多延迟 45 天 |
 | 👔 公司高管买卖 | 董事、高管、10% 股东的增减持（Form 4） | SEC EDGAR | 交易后 2 个工作日内 |
-| 🏦 基金持仓变化 | 机构季度持仓的新建仓 / 加仓 / 减仓 / 清仓（13F），以及大额持股举牌（13D/13G） | SEC EDGAR | 13F 季度披露（季末后 45 天）；13D/13G 事件驱动 |
-| 📰 重要新闻 | 市场新闻 RSS + 关注个股的 8-K 重大事件公告 | CNBC / Yahoo Finance / MarketWatch / SEC / Fed 等 RSS | 实时 |
+| 🏦 基金持仓变化 | 机构季度持仓的新建仓/加仓/减仓/清仓（13F），大额持股举牌（13D/13G） | SEC EDGAR | 13F 季度；13D/G 事件驱动 |
+| 📰 重要新闻 | 市场新闻 + 关注个股新闻 + 关注公司的 8-K 重大事件公告 | CNBC / Yahoo Finance / MarketWatch / SEC / Fed 等 RSS | 实时 |
 
-全部数据来自公开披露，**不需要付费数据源，默认零 API key**（Quiver 是可选增强）。
+国会板块**不依赖任何第三方镜像**——原先常用的 house/senate stock watcher 公开数据集已经关闭访问，
+这里直接读两院官方源，包括把众议院的 PTR PDF 解析成结构化交易记录。
+
+## ⚠️ 先看这一条：在哪台机器上跑
+
+**SEC EDGAR 会按 IP 限流。** 云端共享出口 IP（GitHub Actions、大部分云主机）长期处于超限状态，
+返回的 403 页面原文就是 `SEC.gov | Request Rate Threshold Exceeded`。这跟 User-Agent 无关，换 UA 没用。
+
+| 运行环境 | 国会 | 新闻 | 高管 Form 4 | 基金 13F/13D | 建议 |
+| --- | :-: | :-: | :-: | :-: | --- |
+| **自己的电脑/服务器**（家庭或公司网络） | ✅ | ✅ | ✅ | ✅ | **推荐**，四个板块都能跑 |
+| GitHub Actions | ✅ | ✅ | ❌ | ❌ | 只想要国会+新闻时够用 |
+
+所以默认建议本机跑（下面有一键安装脚本）。真被 SEC 挡住时，报告的"数据源状态"区块会直接写明原因和处理办法，
+不会让你误以为"今天没消息"。
 
 ## 60 秒上手
 
@@ -17,25 +32,41 @@
 cd stock-radar
 pip install -r requirements.txt
 
-python -m stock_radar init            # 生成 config.yaml
-# 编辑 config.yaml：填 sec.user_agent（SEC 强制要求带联系邮箱），改 watchlist
-python -m stock_radar run             # 跑一次，报告写到 out/
+python -m stock_radar init          # 生成 config.yaml
+# 编辑 config.yaml：填 sec.user_agent（SEC 要求带联系邮箱），改 watchlist.tickers
+python -m stock_radar run           # 跑一次，报告写到 out/
 ```
 
-打开 `out/latest.html` 就是当天的报告，`out/latest.md` 适合贴到笔记里，`out/latest.json` 给下游程序用。
+打开 `out/latest.html` 是当天报告，`out/latest.md` 适合贴笔记，`out/latest.json` 给下游程序用。
 
-### 必须先改的两处配置
+### 每天自动跑（本机，推荐）
+
+```bash
+bash install-schedule.sh            # 只打印将要做什么，不改任何东西
+bash install-schedule.sh --apply    # 确认后再执行
+```
+
+macOS 装 launchd 任务，Linux 写 crontab，默认工作日 7:30 本地时间。
+改时间：`HOUR=6 MINUTE=45 bash install-schedule.sh --apply`。卸载方法脚本会打印。
+
+### 每天自动跑（GitHub Actions）
+
+仓库已带 `.github/workflows/stock-radar.yml`，工作日盘前触发，报告出现在运行的 Summary 页和 Artifact 里。
+只要在 **Settings → Secrets and variables → Actions** 加 `SEC_USER_AGENT`（想推送再加对应 secret）。
+跨天去重的状态库通过 `actions/cache` 保存。注意上面的表：这条路上 SEC 那两个板块大概率拿不到数据。
+
+## 配置要点
 
 ```yaml
 sec:
-  # SEC 要求自动化请求带可联系到你的 UA，否则会被限流甚至封 IP
-  user_agent: "Your Name your-email@example.com"
+  user_agent: "Your Name your-email@example.com"   # SEC 要求带能联系到你的邮箱
 
 watchlist:
-  tickers: [AAPL, NVDA, TSLA]     # 高管买卖 / 8-K / 个股新闻默认只跟这些
+  tickers: [AAPL, NVDA, TSLA]   # 高管买卖 / 8-K / 个股新闻默认只跟这些
+  people: []                    # 想重点盯的议员全名，命中会加权
+  funds:                        # 要跟踪 13F 的基金
+    - {name: "Berkshire Hathaway", cik: "0001067983"}
 ```
-
-### 跟踪某只基金的持仓
 
 CIK 别手抄，用内置命令查：
 
@@ -44,30 +75,11 @@ python -m stock_radar find-fund berkshire
 #   - {name: "BERKSHIRE HATHAWAY INC", cik: "0001067983"}
 ```
 
-把输出粘进 `config.yaml` 的 `watchlist.funds` 即可。第一次跑会把该基金的最大持仓当作基线，
-之后每个季度新的 13F 一到就自动 diff 出变动。
-
-## 每天自动跑
-
-### 方式一：GitHub Actions（推荐，零成本）
-
-仓库里已经带了 `.github/workflows/stock-radar.yml`，每个工作日美东盘前触发。你只要：
-
-1. 在仓库 **Settings → Secrets and variables → Actions** 加 `SEC_USER_AGENT`；
-2. 想要推送就再加对应的 secret（见下表）；
-3. 报告会出现在每次运行的 **Summary** 页和 Artifact 里。
-
-跨天去重用的 sqlite 状态库通过 `actions/cache` 保存，所以同一条披露不会天天重复推给你。
-
-### 方式二：本机 cron
-
-```cron
-30 7 * * 1-5 cd /path/to/stock-radar && /usr/bin/python3 -m stock_radar run >> radar.log 2>&1
-```
+第一次跑会把该基金最大持仓当作基线，之后每季新 13F 一到就自动 diff 出变动。
 
 ## 推送渠道
 
-配置文件里只写**环境变量的名字**，真正的密钥放环境变量 / GitHub Secrets，不进 git。
+配置里只写**环境变量的名字**，真正的密钥放环境变量 / GitHub Secrets，不进 git。
 
 | 渠道 | 打开方式 | 需要的环境变量 |
 | --- | --- | --- |
@@ -79,33 +91,38 @@ python -m stock_radar find-fund berkshire
 ## 常用命令
 
 ```bash
-python -m stock_radar run --only news,insiders   # 只跑部分板块
+python -m stock_radar run --only news,congress   # 只跑部分板块
 python -m stock_radar run --date 2026-09-03      # 回补某一天
 python -m stock_radar run --no-dedup --dry-run   # 调试：不去重、不写文件
-python -m stock_radar run -v                     # 看每个数据源到底抓到了什么
+python -m stock_radar -v run                     # 看每个数据源到底抓到了什么
+
+python -m stock_radar probe                      # 体检：逐个打真实数据源，检查格式假设还成不成立
+python -m stock_radar diagnose                   # 深度诊断：SEC 准入矩阵、国会源存活、PDF 正文
 python -m stock_radar find-fund "pershing square"
 ```
 
+**数据源出问题时先跑 `probe`。** 它会分清三种情况：网络失败、HTTP 成功但解析出 0 条（我们的 bug）、
+以及格式漂移（比如 13F 金额单位判断落在不合理区间）。
+
 ## 调参建议
 
-- **信息太多**：把 `sources.news.watchlist_only` 和 `sources.congress.watchlist_only` 设成 `true`，
+- **信息太多**：`sources.news.watchlist_only: true`、`sources.congress.watchlist_only: true`，
   再调高 `sources.insiders.min_value_usd`。
-- **只关心真金白银的买入**：`sources.insiders.codes: [P]`。默认的 `[P, S]` 已经排掉了
-  授予（A）、行权（M）、缴税扣股（F）这些噪音——高管"卖出"里很大一部分其实是预设计划和税务操作。
-- **想看全市场高管交易**：`sources.insiders.scope: all`。注意这会让每次运行从几十个请求涨到几百个，
-  受 `max_filings` 限制，跑一次大概几分钟。
-- **国会数据一条都没有**：免费镜像偶尔停更。把 `providers` 改成
-  `[stockwatcher, house_clerk]`（默认已经是），至少能拿到"某议员提交了 PTR"和 PDF 链接；
-  有 Quiver key 的话 `[quiver, stockwatcher]` 最稳。
+- **只关心真金白银的买入**：`sources.insiders.codes: [P]`。默认 `[P, S]` 已排掉授予（A）、
+  行权（M）、缴税扣股（F）——高管"卖出"里很大一部分其实是预设计划和税务操作。
+- **国会想连国债一起看**：`sources.congress.stocks_only: false`（默认只报股票/期权）。
+- **第一次跑国会板块慢**：要下载并解析 45 天内的所有 PTR PDF。解析结果会缓存进状态库，
+  之后每天只处理新增的。`max_filings` 控制单次上限。
+- **想看全市场高管交易**：`sources.insiders.scope: all`，会从几十个请求涨到几百个。
 
 ## 报告长这样
 
 ```
-## 🏛️ 国会议员交易 (3)
-- **Jane Doe (House) 买入 NVDA [joint]** `2026-08-14`
+## 🏛️ 国会议员交易 (12)
+- **Jane Doe (House) 买入 NVDA [配偶]** `2026-08-14`
   - $250,001 - $500,000 · 交易日 2026-08-14 · 延迟披露 19 天
 
-## 👔 公司高管买卖 (Form 4) (2)
+## 👔 公司高管买卖 (Form 4) (3)
 - **AAPL · COOK TIMOTHY D 卖出 511,000 股 ($115.70M)** `2026-09-03`
   - Director, Chief Executive Officer · 成交价 $226.42 · 交易后持股 3,280,000
 
@@ -114,31 +131,49 @@ python -m stock_radar find-fund "pershing square"
   - 27,033,784 股 · $6.72B
 ```
 
-报告末尾固定有一个**数据源状态**区块。某个源挂了会显示 ❌ 和原因——
-这样"今天没消息"和"今天抓取失败"不会长得一样。
+报告末尾固定有**数据源状态**区块。某个源挂了会显示 ❌ 和具体原因——
+"今天没消息"和"今天抓取失败"不会长得一样。
 
 ## 设计说明
 
-- **跨天去重**：每条内容有稳定的 key，存在 `.stock-radar/state.db`。国会披露数据会在
-  滚动窗口里留存好几周，没有去重的话同一笔交易会连着推 45 天。
-- **单个数据源失败不影响其他板块**：collector 抛异常只会让那一个板块变成 ❌，其余照常出。
-- **13F 金额单位**：2023 年规则修改前 `<value>` 报的是千美元、之后是美元，而且旧格式仍会出现在
-  修正案里。代码按"每股隐含价格"推断单位，不硬编码年份。
-- **SEC 限速**：全局限速器默认 5 req/s（SEC 上限 10），并强制带 User-Agent。
-- **依赖只有两个**：`requests` 和 `PyYAML`。RSS/Atom 解析是自己写的，少一个依赖就少一个
-  无人值守时崩掉的理由。
+- **跨天去重**：每条内容有稳定 key，存在 `.stock-radar/state.db`。国会披露会在滚动窗口里
+  留存好几周，没有去重同一笔交易会连推 45 天。
+- **PTR 解析结果也缓存**：一份 PTR 的内容永远不变，没必要每天重新下载解析。
+- **失败必须看得见**：单个源失败只让那个板块变 ❌；连采集器内部吞掉的子失败（某个 RSS 挂了、
+  某只基金 403）也会折进状态区块，不会显示成 ✅ 0 条。
+- **13F 金额单位**：2023 年规则修改前 `<value>` 报千美元、之后报美元，旧格式仍会出现在修正案里。
+  代码按"每股隐含价格"推断单位，不按年份硬编码——这里搞错就是 1000 倍误差。
+- **PTR PDF 解析**：抽出来的文本会在行中间换行，小型大写标题会变成 NUL 字符。解析器保留行结构，
+  用"交易代码 + 两个日期 + 金额区间"这个永远完整的形状定位每一行，资产名取它正上方的行——
+  这才能把本行资产和上一行的尾注分开。
+- **SEC 限速**：全局限速器默认 5 req/s（SEC 上限 10），并强制带 User-Agent；配置里留着模板占位值会被检测出来。
+- **依赖只有三个**：`requests`、`PyYAML`、`pypdf`。RSS/Atom 解析和 HTML 表格解析都是标准库写的。
+
+## 已验证到什么程度
+
+`probe` 和 `diagnose` 会在 GitHub Actions 上跑（`.github/workflows/stock-radar-probe.yml`，
+每周一定时 + 每次改动代码时），打的是真实端点。截至最近一次运行：
+
+- ✅ 7/7 新闻 RSS 源可用，条目、时间戳、摘要都正确解析
+- ✅ 众议院年度索引可下载，PTR PDF 链接格式正确，正文可抽取并解析成交易记录
+- ✅ 参议院 eFD 的同意条款 + CSRF + 搜索接口全流程可用
+- ❌ SEC EDGAR 在 GitHub 的 IP 上被限流（见上文），Form 4 / 13F 需要在本机验证
+
+`python -m pytest -q` 有 74 个测试，全部离线跑，覆盖真实格式样本
+（Form 4 XML、13F 信息表、EDGAR master.idx、RSS/Atom、众议院 PTR PDF、参议院 eFD 表格）。
 
 ## 开发
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest -q          # 57 个测试，全部离线跑，不碰网络
+python -m pytest -q
 ```
 
-测试用 `tests/conftest.py` 里的假 HTTP 层，按 URL 匹配返回 `tests/fixtures/` 里的真实格式样本
-（Form 4 XML、13F 信息表、EDGAR master.idx、RSS/Atom、国会交易 JSON）。改解析逻辑时先跑它。
+测试用 `tests/conftest.py` 的假 HTTP 层按 URL 匹配返回 `tests/fixtures/` 里的样本，
+连众议院 ZIP 索引和 PTR PDF 都是测试里现造的真文件，会走一遍真实的 pypdf 抽取。
+改解析逻辑时先跑它，再看 `probe` 的线上结果。
 
 ## 免责声明
 
-本工具只做公开披露数据的自动汇总，**不构成投资建议**。免费镜像数据源可能滞后或缺失，
-重要决策请以 SEC EDGAR、众议院/参议院官方披露页面的原始文件为准。
+本工具只做公开披露数据的自动汇总，**不构成投资建议**。披露本身存在法定延迟（国会最多 45 天，
+13F 为季度且滞后 45 天），重要决策请以 SEC EDGAR、众议院/参议院官方披露页面的原始文件为准。

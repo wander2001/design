@@ -157,3 +157,33 @@ class TestMasterIndex:
 
     def test_header_lines_are_skipped(self):
         assert list(parse_master_idx("garbage\nheader|only|three")) == []
+
+
+class TestSecBlockDetection:
+    """SEC's two 403 pages mean different things; the report must say which."""
+
+    def test_rate_limit_page(self):
+        from stock_radar.http import sec_block_hint
+
+        body = b"<html><title>SEC.gov | Request Rate Threshold Exceeded</title></html>"
+        assert "频率超限" in sec_block_hint(body)
+        assert "自己的机器" in sec_block_hint(body)
+
+    def test_undeclared_tool_page(self):
+        from stock_radar.http import sec_block_hint
+
+        body = b"<html><title>SEC.gov | Your Request Originates from an Undeclared Automated Tool</title></html>"
+        assert "user_agent" in sec_block_hint(body).lower()
+
+    def test_unrelated_body_gets_no_hint(self):
+        from stock_radar.http import sec_block_hint
+
+        assert sec_block_hint(b"<html>404 not found</html>") == ""
+
+    def test_hint_reaches_the_error_message(self):
+        from stock_radar.http import HttpError, sec_block_hint
+
+        hint = sec_block_hint(b"SEC.gov | Request Rate Threshold Exceeded")
+        error = HttpError("https://www.sec.gov/x", 403, hint)
+        assert "403" in str(error) and "频率超限" in str(error)
+        assert error.hint == hint

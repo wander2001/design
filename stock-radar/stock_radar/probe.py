@@ -49,6 +49,9 @@ class Probe:
             return fn()
         except Exception as exc:
             self.record(FAIL, check, f"{type(exc).__name__}: {exc}")
+            hint = getattr(exc, "hint", "")
+            if hint:
+                self.record(INFO, "  ↳ 怎么办", hint)
             if self.verbose:
                 traceback.print_exc()
             return None

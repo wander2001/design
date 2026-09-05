@@ -42,11 +42,37 @@ class RateLimiter:
             time.sleep(wait)
 
 
+# SEC serves both of these as a 403 HTML page through Akamai. They mean different
+# things and have different remedies, so the page is read rather than guessed at.
+SEC_BLOCK_HINTS = (
+    (
+        "Request Rate Threshold Exceeded",
+        "SEC 判定该 IP 请求频率超限。共享出口 IP（GitHub Actions、云主机）常年处于超限状态，"
+        "换 User-Agent 没用；把任务放到自己的机器上跑，或降低 sec.rate_per_sec",
+    ),
+    (
+        "Undeclared Automated Tool",
+        "SEC 认为请求没有声明来源。把 sec.user_agent（或 SEC_USER_AGENT 环境变量）"
+        "设成 '你的名字 你的邮箱@域名' 这种带联系方式的格式",
+    ),
+)
+
+
 class HttpError(RuntimeError):
-    def __init__(self, url: str, status: int) -> None:
-        super().__init__(f"HTTP {status} for {url}")
+    def __init__(self, url: str, status: int, hint: str = "") -> None:
+        super().__init__(f"HTTP {status} for {url}" + (f" — {hint}" if hint else ""))
         self.url = url
         self.status = status
+        self.hint = hint
+
+
+def sec_block_hint(body: bytes) -> str:
+    """The remedy SEC's own rejection page implies, or '' if it is not one of them."""
+    head = body[:4000].decode("utf-8", errors="replace")
+    for marker, hint in SEC_BLOCK_HINTS:
+        if marker in head:
+            return hint
+    return ""
 
 
 class Http:
@@ -121,7 +147,7 @@ class Http:
                 last_exc = HttpError(url, resp.status_code)
                 continue
             if not resp.ok:
-                raise HttpError(url, resp.status_code)
+                raise HttpError(url, resp.status_code, sec_block_hint(resp.content))
             self._cache_write(url, resp.content)
             return resp.content
 
