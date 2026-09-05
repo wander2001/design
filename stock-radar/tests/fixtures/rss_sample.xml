@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<title>Market News</title>
+<item>
+  <title>Nvidia beats earnings, NVDA jumps 8% after hours</title>
+  <link>https://example.com/a/nvda-earnings?utm_source=rss&amp;utm_medium=feed</link>
+  <pubDate>Thu, 03 Sep 2026 21:30:00 GMT</pubDate>
+  <description>&lt;p&gt;The chipmaker reported record data-center revenue.&lt;/p&gt;</description>
+</item>
+<item>
+  <title>Fed holds rates steady</title>
+  <link>https://example.com/a/fed</link>
+  <pubDate>Thu, 03 Sep 2026 18:00:00 GMT</pubDate>
+  <description>Policymakers left the target range unchanged.</description>
+</item>
+<item>
+  <title>Ancient story that should be filtered out</title>
+  <link>https://example.com/a/old</link>
+  <pubDate>Mon, 01 Jan 2024 10:00:00 GMT</pubDate>
+  <description>old</description>
+</item>
+</channel></rss>

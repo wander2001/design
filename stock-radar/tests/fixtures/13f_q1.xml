@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<informationTable xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable">
+  <infoTable><nameOfIssuer>APPLE INC</nameOfIssuer><titleOfClass>COM</titleOfClass><cusip>037833100</cusip>
+    <value>69016000</value><shrsOrPrnAmt><sshPrnamt>300000000</sshPrnamt><sshPrnamtType>SH</sshPrnamtType></shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion><votingAuthority><Sole>300000000</Sole><Shared>0</Shared><None>0</None></votingAuthority></infoTable>
+  <infoTable><nameOfIssuer>BANK OF AMERICA CORP</nameOfIssuer><titleOfClass>COM</titleOfClass><cusip>060505104</cusip>
+    <value>41100000</value><shrsOrPrnAmt><sshPrnamt>1032852006</sshPrnamt><sshPrnamtType>SH</sshPrnamtType></shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion><votingAuthority><Sole>1032852006</Sole><Shared>0</Shared><None>0</None></votingAuthority></infoTable>
+  <infoTable><nameOfIssuer>PARAMOUNT GLOBAL</nameOfIssuer><titleOfClass>CL B</titleOfClass><cusip>92556H206</cusip>
+    <value>241000</value><shrsOrPrnAmt><sshPrnamt>63322491</sshPrnamt><sshPrnamtType>SH</sshPrnamtType></shrsOrPrnAmt>
+    <investmentDiscretion>SOLE</investmentDiscretion><votingAuthority><Sole>63322491</Sole><Shared>0</Shared><None>0</None></votingAuthority></infoTable>
+</informationTable>

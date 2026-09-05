@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# 生成的报告和跨天去重的状态库
+out/
+sample-output/
+.stock-radar/
+config.yaml
+.cache/
