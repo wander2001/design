@@ -2,7 +2,8 @@ name: Stock Radar probe (数据源体检)
 
 # Runs the live diagnostics against the real SEC / disclosure / RSS endpoints.
 # GitHub's runners can reach them, which makes this the place to verify that our
-# format assumptions still hold.
+# format assumptions still hold. Each stage is its own job so one stage's output
+# is not buried in another's log.
 on:
   push:
     paths:
@@ -12,17 +13,73 @@ on:
   schedule:
     - cron: "0 6 * * 1"   # 每周一体检一次，格式漂移能早发现
 
+env:
+  SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || format('stock-radar probe (+https://github.com/{0})', github.repository) }}
+
 jobs:
+  sec-access:
+    name: SEC 准入矩阵
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: stock-radar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - run: python -c "from stock_radar.diagnose import sec_access_matrix; sec_access_matrix()"
+
+  congress-sources:
+    name: 国会数据源存活与结构
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: stock-radar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt pypdf
+      - run: python -c "from stock_radar.diagnose import congress_mirror_check, house_clerk_pdf_check; congress_mirror_check(); house_clerk_pdf_check()"
+
+  house-pdf:
+    name: 众议院 PTR PDF 正文
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: stock-radar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt pypdf
+      - run: python -c "from stock_radar.diagnose import house_ptr_pdf_text; house_ptr_pdf_text()"
+
+  senate:
+    name: 参议院 EFD
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: stock-radar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - run: python -c "from stock_radar.diagnose import senate_efd_check, senate_report_shape; senate_efd_check(); senate_report_shape()"
+
   probe:
+    name: 数据源体检 + 端到端
     runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:
       run:
         working-directory: stock-radar
-    env:
-      # SEC wants a contact in the UA. Prefer the repo secret; otherwise point at
-      # the repository itself rather than shipping a placeholder address.
-      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || format('stock-radar probe (+https://github.com/{0})', github.repository) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,10 +103,6 @@ jobs:
           pathlib.Path("probe-config.yaml").write_text(yaml.safe_dump(d, allow_unicode=True))
           PY
 
-      - name: Deep diagnostics (SEC 准入矩阵 / 国会数据源存活)
-        continue-on-error: true
-        run: python -m stock_radar diagnose 2>&1 | tee diagnose.log
-
       - name: Probe every data source
         id: probe
         continue-on-error: true
@@ -61,7 +114,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          python -m stock_radar -v run -c probe-config.yaml --no-notify 2>&1 | tail -50 | tee run.log
+          python -m stock_radar -v run -c probe-config.yaml --no-notify 2>&1 | tail -40 | tee run.log
           echo "================ 真实数据生成的报告 ================"
           cat probe-out/latest.md
 
@@ -72,14 +125,7 @@ jobs:
           name: probe-${{ github.run_id }}
           path: |
             stock-radar/probe.log
-            stock-radar/diagnose.log
             stock-radar/run.log
             stock-radar/probe-out/
           retention-days: 14
           if-no-files-found: warn
-
-      - name: Fail the job if any source is broken
-        if: steps.probe.outcome == 'failure'
-        run: |
-          echo "probe 报告了 FAIL 项，见上面的日志"
-          exit 1

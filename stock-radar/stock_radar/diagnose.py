@@ -227,3 +227,112 @@ def run_all(out=print) -> None:
     congress_mirror_check(out)
     house_clerk_pdf_check(out)
     senate_efd_check(out)
+    house_ptr_pdf_text(out)
+    senate_report_shape(out)
+
+
+def house_ptr_pdf_text(out=print, limit: int = 3) -> None:
+    """Dump the extracted text of real PTR PDFs.
+
+    The transaction table only exists inside these PDFs, and its layout varies by
+    filing year and by whether the member filed electronically, so the parser has
+    to be written against what actually comes out — not against a guess.
+    """
+    out("\n" + "=" * 78)
+    out("== 众议院 PTR PDF 正文抽取（用于编写解析器）")
+    out("=" * 78)
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        out("  pypdf 未安装，跳过")
+        return
+
+    import io
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    headers = {"User-Agent": "Stock Radar stock-radar@users.noreply.github.com"}
+    raw = requests.get(
+        "https://disclosures-clerk.house.gov/public_disc/financial-pdfs/2026FD.ZIP",
+        headers=headers, timeout=TIMEOUT,
+    ).content
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        xml_bytes = next((zf.read(n) for n in zf.namelist() if n.lower().endswith(".xml")), b"")
+    root = ET.fromstring(xml_bytes)
+    ptrs = [m for m in root.iter("Member") if (m.findtext("FilingType") or "").strip() == "P"]
+    out(f"  2026 年 PTR 共 {len(ptrs)} 条，取最新 {limit} 份看正文")
+
+    for member in ptrs[-limit:]:
+        fields = {c.tag: (c.text or "").strip() for c in member}
+        url = (
+            "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/"
+            f"{fields.get('Year')}/{fields.get('DocID')}.pdf"
+        )
+        out(f"\n  --- {fields.get('First','')} {fields.get('Last','')} ({fields.get('StateDst','')}) "
+            f"filed {fields.get('FilingDate','')} → {url}")
+        try:
+            body = requests.get(url, headers=headers, timeout=TIMEOUT)
+            out(f"      HTTP {body.status_code}, {len(body.content):,}B, {body.headers.get('content-type')}")
+            if not body.ok:
+                continue
+            reader = PdfReader(io.BytesIO(body.content))
+            out(f"      {len(reader.pages)} 页")
+            text = "\n".join((page.extract_text() or "") for page in reader.pages[:2])
+            if not text.strip():
+                out("      ⚠️  抽不出文字（大概率是扫描件）")
+                continue
+            for line in text.splitlines()[:45]:
+                out(f"      | {line}")
+        except Exception as exc:
+            out(f"      ERR {type(exc).__name__}: {str(exc)[:120]}")
+
+
+def senate_report_shape(out=print) -> None:
+    """Senate electronic PTRs render as HTML tables; dump one to see the columns."""
+    out("\n" + "=" * 78)
+    out("== 参议院 PTR 报告页结构")
+    out("=" * 78)
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Stock Radar stock-radar@users.noreply.github.com"})
+    home = "https://efdsearch.senate.gov/search/home/"
+    try:
+        page = session.get(home, timeout=TIMEOUT)
+        token = ""
+        match = re.search(r"name=['\"]csrfmiddlewaretoken['\"] value=['\"]([^'\"]+)", page.text)
+        if match:
+            token = match.group(1)
+        session.post(
+            home, data={"prohibition_agreement": "1", "csrfmiddlewaretoken": token},
+            headers={"Referer": home}, timeout=TIMEOUT,
+        )
+        resp = session.post(
+            "https://efdsearch.senate.gov/search/report/data/",
+            data={
+                "start": "0", "length": "5", "report_types": "[11]", "filer_types": "[]",
+                "submitted_start_date": "01/01/2026 00:00:00", "submitted_end_date": "",
+                "candidate_state": "", "senator_state": "", "office_id": "",
+                "first_name": "", "last_name": "", "csrfmiddlewaretoken": token,
+            },
+            headers={"Referer": home}, timeout=TIMEOUT,
+        )
+        rows = resp.json().get("data", []) if resp.ok else []
+    except Exception as exc:
+        out(f"  搜索失败: {type(exc).__name__}: {str(exc)[:140]}")
+        return
+
+    out(f"  拿到 {len(rows)} 行")
+    for row in rows[:2]:
+        out(f"  行原始内容: {row}")
+        link = re.search(r'href=["\']([^"\']+)', " ".join(str(c) for c in row))
+        if not link:
+            continue
+        url = "https://efdsearch.senate.gov" + link.group(1)
+        try:
+            detail = session.get(url, timeout=TIMEOUT)
+            out(f"    报告页 {url} → {detail.status_code}, {len(detail.content):,}B")
+            text = re.sub(r"<[^>]+>", " | ", detail.text)
+            text = re.sub(r"\s*\|\s*(\|\s*)+", " | ", re.sub(r"[ \t]+", " ", text))
+            out("    正文（去标签后前 1600 字）:")
+            out("      " + text.strip()[:1600].replace("\n", " "))
+        except Exception as exc:
+            out(f"    ERR {type(exc).__name__}: {str(exc)[:120]}")
