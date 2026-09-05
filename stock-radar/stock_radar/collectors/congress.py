@@ -114,6 +114,7 @@ class CongressTrade:
     asset_type: str = ""
     source: str = ""
     is_equity: bool = True
+    row_index: int = 0
 
     @property
     def amount_text(self) -> str:
@@ -195,9 +196,10 @@ def _from_house_clerk(ctx: CollectorContext, state=None) -> list[CongressTrade]:
                 )
             )
             continue
-        for row in rows:
+        for position, row in enumerate(rows):
             trades.append(
                 CongressTrade(
+                    row_index=position,
                     person=person,
                     chamber="House",
                     ticker=row["ticker"],
@@ -516,8 +518,9 @@ class CongressCollector:
             )
             items.append(
                 item.with_key(
-                    trade.source, trade.person, trade.ticker, trade.asset[:40], trade.action,
-                    trade.transaction_date, trade.disclosure_date, trade.amount_high,
+                    trade.source, trade.person, trade.url, trade.row_index, trade.ticker,
+                    trade.asset[:40], trade.action, trade.transaction_date,
+                    trade.disclosure_date, trade.amount_high,
                 )
             )
         return items

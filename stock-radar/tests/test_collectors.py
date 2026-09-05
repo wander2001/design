@@ -280,3 +280,38 @@ class TestNews:
             {"name": "Dead", "url": "https://dead.example.com/rss"}
         )
         assert NewsCollector().collect(ctx)  # unrouted URL -> allow_404 -> empty, others still parse
+
+
+class TestProbeWiring:
+    """The probe reaches into collector internals, so a rename there must break a test."""
+
+    def build(self, ctx):
+        from stock_radar.probe import Probe
+
+        probe = Probe(ctx.config, today=ctx.today)
+        probe.http = ctx.http
+        probe.edgar = ctx.edgar
+        return probe
+
+    def test_congress_check_runs_against_the_official_pipeline(self, ctx):
+        probe = self.build(ctx)
+        probe.check_congress()
+        checks = {check for _, check, _ in probe.results}
+        assert "众议院年度索引" in checks
+        assert "众议院 PDF 解析" in checks
+        # The House half must actually parse rows out of the fixture PDF.
+        parsed = next(d for lvl, c, d in probe.results if c == "众议院 PDF 解析")
+        assert "0 笔交易" not in parsed
+        assert not any(lvl == "FAIL" and "众议院" in c for lvl, c, _ in probe.results)
+
+    def test_a_broken_section_does_not_end_the_probe(self, ctx, monkeypatch):
+        probe = self.build(ctx)
+        monkeypatch.setattr(probe, "check_13f", lambda: 1 / 0)
+        probe.run()
+        checks = {check for _, check, _ in probe.results}
+        assert "D. 13F" in checks              # recorded as a failure
+        assert any("feed" in c for c in checks)  # and later sections still ran
+
+    def test_duplicate_rows_keep_separate_keys(self, ctx):
+        items = CongressCollector().collect(ctx)
+        assert len({i.key for i in items}) == len(items)

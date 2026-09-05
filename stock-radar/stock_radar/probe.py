@@ -11,7 +11,7 @@ import statistics
 import sys
 import traceback
 import xml.etree.ElementTree as ET
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from .config import Config
 from .edgar import Edgar, business_days, strip_ns
@@ -33,6 +33,9 @@ class Probe:
         )
         self.edgar = Edgar(self.http)
         self.results: list[tuple[str, str, str]] = []
+        # _house_index() takes a CollectorContext and only touches .http and .config,
+        # both of which the probe already has; notes collects what collectors would log.
+        self.notes: list[str] = []
 
     # -- reporting -------------------------------------------------------
     def record(self, level: str, check: str, detail: str = "") -> None:
@@ -208,56 +211,97 @@ class Probe:
             self.record(INFO, "  样本", f"{row.form_type} | CIK {row.cik} | {row.company} | {row.accession}")
 
     def check_congress(self) -> None:
-        self.section("F. 国会议员交易数据源")
+        """Walk the official pipeline: index -> filing -> parsed transactions."""
+        self.section("F. 国会议员交易（官方源）")
         from .collectors import congress as C
+        from .house_ptr import parse_ptr_pdf
 
-        for label, url, person_key in (
-            ("House Stock Watcher", C.HOUSE_URL, "representative"),
-            ("Senate Stock Watcher", C.SENATE_URL, "senator"),
-        ):
-            rows = self.guard(label, lambda u=url: self.http.get_json(u, allow_404=True))
-            if rows is None:
-                continue
-            if not isinstance(rows, list) or not rows:
-                self.record(FAIL, label, f"返回的不是非空列表: {type(rows).__name__}")
-                continue
-            self.record(PASS, label, f"{len(rows)} 条记录")
-            sample = rows[-1] if isinstance(rows[-1], dict) else rows[0]
-            self.record(INFO, f"  {label} 字段", str(sorted(sample.keys())))
-            self.record(INFO, f"  {label} 样本", str(sample)[:400])
-            # Field-name drift is the failure mode that silently empties this section.
-            for field in (person_key, "ticker", "amount", "type", "transaction_date", "disclosure_date"):
-                present = sum(1 for r in rows[-200:] if isinstance(r, dict) and field in r)
-                level = PASS if present > 150 else FAIL
-                self.record(level, f"  {label} 字段 '{field}'", f"最近 200 条里出现 {present} 次")
-            dates = [C.parse_date(r.get("disclosure_date")) for r in rows[-500:] if isinstance(r, dict)]
-            dates = [d for d in dates if d]
-            if dates:
-                newest = max(dates)
-                lag = (self.today - newest).days
-                level = PASS if lag <= 21 else WARN
-                self.record(level, f"  {label} 新鲜度", f"最新披露日 {newest}（距今 {lag} 天）")
-            else:
-                self.record(FAIL, f"  {label} 新鲜度", "解析不出任何 disclosure_date")
-
-        raw = self.guard("House Clerk ZIP", lambda: self.http.get(C.HOUSE_CLERK_ZIP.format(year=self.today.year), allow_404=True))
-        if raw:
-            from .edgar import unzip_first
-
-            xml_bytes = unzip_first(raw, ".xml")
-            if xml_bytes:
-                root = ET.fromstring(xml_bytes)
-                members = list(root.iter("Member"))
-                ptrs = [m for m in members if (m.findtext("FilingType") or "").strip() == "P"]
-                self.record(PASS, "House Clerk 官方索引", f"ZIP {len(raw):,} 字节；{len(members)} 条申报，其中 PTR {len(ptrs)} 条")
-                if ptrs:
-                    m = ptrs[-1]
-                    fields = {c.tag: (c.text or "").strip() for c in m}
-                    self.record(INFO, "  最新 PTR", str(fields))
-            else:
-                self.record(FAIL, "House Clerk 官方索引", "ZIP 里没有 XML")
+        # -- House: yearly ZIP index -> PTR PDF -> rows
+        members = self.guard("众议院年度索引", lambda: C._house_index(self, self.today.year))
+        if members:
+            ptrs = [m for m in members if m.get("FilingType") == "P"]
+            self.record(PASS, "众议院年度索引", f"{len(members)} 条申报，其中 PTR {len(ptrs)} 条")
+            if ptrs:
+                self.record(INFO, "  索引字段", str(sorted(ptrs[-1].keys())))
+                recent = sorted(
+                    ptrs, key=lambda m: C.parse_date(m.get("FilingDate")) or date.min, reverse=True
+                )
+                newest = C.parse_date(recent[0].get("FilingDate"))
+                lag = (self.today - newest).days if newest else None
+                self.record(
+                    PASS if lag is not None and lag <= 30 else WARN,
+                    "  众议院新鲜度",
+                    f"最新 PTR 申报日 {newest}（距今 {lag} 天）",
+                )
+                parsed_rows = equity_rows = 0
+                for filing in recent[:5]:
+                    url = C.HOUSE_PTR_PDF.format(
+                        year=filing.get("Year") or self.today.year, doc_id=filing.get("DocID")
+                    )
+                    pdf = self.guard(f"PTR {filing.get('DocID')}", lambda u=url: self.http.get(u, allow_404=True))
+                    if not pdf:
+                        continue
+                    rows = parse_ptr_pdf(pdf)
+                    parsed_rows += len(rows)
+                    equity_rows += sum(1 for r in rows if r.is_equity)
+                    who = f"{filing.get('First','')} {filing.get('Last','')}".strip()
+                    if not rows:
+                        self.record(WARN, f"  PTR {filing.get('DocID')} ({who})", "0 笔交易（多半是扫描件）")
+                        continue
+                    sample = rows[0]
+                    self.record(
+                        PASS,
+                        f"  PTR {filing.get('DocID')} ({who})",
+                        f"{len(rows)} 笔；示例: {sample.ticker or '(无代码)'} [{sample.asset_type}] "
+                        f"{sample.action} {sample.traded} ${sample.amount_low:,.0f}-${sample.amount_high:,.0f} "
+                        f"| {sample.asset[:50]}",
+                    )
+                self.record(
+                    PASS if parsed_rows else FAIL,
+                    "众议院 PDF 解析",
+                    f"5 份样本共解析出 {parsed_rows} 笔交易，其中股票/期权 {equity_rows} 笔",
+                )
         else:
-            self.record(WARN, "House Clerk 官方索引", "取不到 ZIP")
+            self.record(FAIL, "众议院年度索引", "取不到或解析不出 Member 节点")
+
+        # -- Senate: agreement + CSRF -> search -> electronic report table
+        def senate():
+            session = C.EfdSession(user_agent=self.http.user_agent)
+            session.open()
+            filings = session.search_ptrs(self.today - timedelta(days=45), limit=25)
+            return session, filings
+
+        result = self.guard("参议院 eFD 搜索", senate)
+        if not result:
+            return
+        session, filings = result
+        if not filings:
+            self.record(WARN, "参议院 eFD 搜索", "45 天内没有 PTR（可能属实，也可能是接口变了）")
+            return
+        electronic = [f for f in filings if f.is_electronic]
+        self.record(
+            PASS, "参议院 eFD 搜索",
+            f"{len(filings)} 份申报，其中电子版 {len(electronic)} 份、扫描件 {len(filings) - len(electronic)} 份",
+        )
+        self.record(INFO, "  最新一份", f"{filings[0].person} · {filings[0].filed} · {filings[0].url}")
+
+        parsed = 0
+        for filing in electronic[:3]:
+            rows = self.guard(f"  参议院报告 {filing.person}", lambda f=filing: session.transactions(f))
+            if not rows:
+                self.record(WARN, f"  参议院报告 {filing.person}", "电子版但解析出 0 笔，表格结构可能变了")
+                continue
+            parsed += len(rows)
+            row = rows[0]
+            self.record(
+                PASS, f"  参议院报告 {filing.person}",
+                f"{len(rows)} 笔；示例: {row.ticker or '(无代码)'} [{row.asset_type}] {row.action} "
+                f"{row.traded} ${row.amount_low:,.0f}-${row.amount_high:,.0f} | {row.asset[:50]}",
+            )
+        self.record(
+            PASS if parsed or not electronic else FAIL,
+            "参议院表格解析", f"{len(electronic[:3])} 份电子报告共解析出 {parsed} 笔交易",
+        )
 
     def check_news(self) -> None:
         self.section("G. 新闻 RSS/Atom 源")
@@ -304,13 +348,16 @@ class Probe:
             self.record(FAIL, "SEC User-Agent", warning)
         else:
             self.record(PASS, "SEC User-Agent", self.http.user_agent)
-        rows_by_day = self.check_daily_index() or []
-        self.check_ticker_map()
-        self.check_form4(rows_by_day)
-        self.check_13f()
-        self.check_stakes(rows_by_day)
-        self.check_congress()
-        self.check_news()
+        rows_by_day = self.guard("A. 日索引", self.check_daily_index) or []
+        for name, check in (
+            ("B. ticker 映射", self.check_ticker_map),
+            ("C. Form 4", lambda: self.check_form4(rows_by_day)),
+            ("D. 13F", self.check_13f),
+            ("E. 13D/13G", lambda: self.check_stakes(rows_by_day)),
+            ("F. 国会", self.check_congress),
+            ("G. 新闻", self.check_news),
+        ):
+            self.guard(name, check)
 
         self.section("总结")
         counts = {level: sum(1 for l, _, _ in self.results if l == level) for level in (PASS, WARN, FAIL)}
