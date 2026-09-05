@@ -7,7 +7,7 @@ name = "stock-radar"
 version = "0.1.0"
 description = "Daily digest of congressional trades, insider Form 4s, 13F fund moves and market news"
 requires-python = ">=3.10"
-dependencies = ["requests>=2.31", "PyYAML>=6.0"]
+dependencies = ["requests>=2.31", "PyYAML>=6.0", "pypdf>=4.0"]
 
 [project.scripts]
 stock-radar = "stock_radar.cli:main"

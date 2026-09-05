@@ -29,14 +29,20 @@ sec:
 sources:
   congress:
     enabled: true
-    # 依次尝试，第一个取到数据的生效：
-    #   stockwatcher  免费社区镜像（house/senate stock watcher），无需 key
-    #   quiver        需要环境变量 QUIVER_API_KEY
-    #   house_clerk   众议院官方索引，只有"某议员提交了 PTR"+PDF 链接（兜底）
-    providers: [stockwatcher, house_clerk]
+    # 全部跑一遍再合并（两院各管一半，不是"谁先出数据谁赢"）：
+    #   house_clerk   众议院官方：年度 ZIP 索引 → PTR PDF → 解析出真实交易明细
+    #   senate_efd    参议院官方 eFD：同意条款 + CSRF → 电子报告表格
+    #   quiver        可选增强，需要环境变量 QUIVER_API_KEY
+    #   stockwatcher  旧的社区镜像；公开访问已关闭，只有自建镜像才填 *_mirror_url
+    providers: [house_clerk, senate_efd]
     lookback_days: 45      # STOCK Act 允许最多延迟 45 天披露
-    min_amount_usd: 15000  # 按披露金额区间的上限过滤
+    min_amount_usd: 1000   # PTR 的金额区间从 $1,001 起
+    stocks_only: true      # 只报股票/期权，滤掉国债、市政债这类噪音
     watchlist_only: false  # true = 只报关注的票/议员
+    max_filings: 80        # 单次最多抓取解析多少份申报（解析结果会缓存）
+    # 自建镜像才需要填，留空则用官方源
+    house_mirror_url: ""
+    senate_mirror_url: ""
 
   insiders:
     enabled: true

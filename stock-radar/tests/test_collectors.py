@@ -39,39 +39,183 @@ class TestInsiders:
         assert first == second and first
 
 
-class TestCongress:
-    def test_collects_house_and_senate_within_lookback(self, ctx):
-        items = CongressCollector().collect(ctx)
-        people = {i.detail["person"] for i in items}
-        assert "Jane Doe" in people  # "Hon." prefix stripped
-        assert "Sam Senator" in people
-        assert "Old Timer" not in people  # 2024 disclosure is outside the 45-day window
+class FakeEfd:
+    """Stands in for the eFD session: the click-through + CSRF flow needs a browser cookie jar."""
 
-    def test_amount_filter_and_scoring(self, ctx):
-        items = CongressCollector().collect(ctx)
+    filings: list = []
+    rows: dict = {}
+    opened = 0
+
+    def __init__(self, user_agent, timeout=30.0):
+        self.user_agent = user_agent
+
+    def open(self):
+        type(self).opened += 1
+
+    def search_ptrs(self, since, limit=100):
+        return [f for f in self.filings if f.filed is None or f.filed >= since]
+
+    def transactions(self, filing):
+        return self.rows.get(filing.url, [])
+
+
+def senate_fixture():
+    from stock_radar.senate_efd import SenateFiling, SenateTransaction
+
+    electronic = SenateFiling(
+        first_name="SAM ", last_name="SENATOR", filer_type="Senator",
+        title="Periodic Transaction Report for 09/01/2026",
+        url="https://efdsearch.senate.gov/search/view/ptr/abc/", filed=date(2026, 9, 1),
+    )
+    paper = SenateFiling(
+        first_name="PAT ", last_name="PAPER", filer_type="Senator",
+        title="Periodic Transaction Report for 08/31/2026",
+        url="https://efdsearch.senate.gov/search/view/paper/def/", filed=date(2026, 8, 31),
+    )
+    FakeEfd.filings = [electronic, paper]
+    FakeEfd.rows = {
+        electronic.url: [
+            SenateTransaction(
+                filing=electronic, traded=date(2026, 8, 28), owner="Spouse", ticker="AAPL",
+                asset="Apple Inc. Common Stock", asset_type="Stock", action="Sale (Full)",
+                amount_low=100001.0, amount_high=250000.0,
+            ),
+            SenateTransaction(
+                filing=electronic, traded=date(2026, 8, 29), owner="Self", ticker="",
+                asset="US Treasury Bill", asset_type="Corporate Bond", action="Purchase",
+                amount_low=1001.0, amount_high=15000.0,
+            ),
+        ]
+    }
+    return electronic, paper
+
+
+class TestCongressHouse:
+    """The House provider goes ZIP index -> PTR PDF -> transaction rows, all official."""
+
+    def collect(self, ctx, state=None):
+        ctx.config.data["sources"]["congress"]["providers"] = ["house_clerk"]
+        return CongressCollector(state=state).collect(ctx)
+
+    def test_parses_transactions_out_of_the_pdf(self, ctx):
+        items = self.collect(ctx)
+        tickers = {i.detail["ticker"] for i in items if i.detail["ticker"]}
+        assert tickers == {"NVDA", "AAPL", "MSFT"}
         nvda = next(i for i in items if i.detail["ticker"] == "NVDA")
+        assert nvda.detail["person"] == "Jane Doe"
+        assert nvda.detail["chamber"] == "House"
+        assert nvda.detail["action"] == "purchase"
         assert nvda.detail["amount_high"] == 500000
-        assert "延迟披露" in nvda.summary
-        # NVDA is on the watchlist, so it must outrank the untickered treasury sale.
-        other = next(i for i in items if i.detail["person"] == "John Roe")
-        assert nvda.score > other.score
+        assert nvda.detail["transaction_date"] == date(2026, 8, 14)
+        assert "配偶" in nvda.title  # owner code SP
+        assert "延迟披露 19 天" in nvda.summary
+        assert nvda.url.endswith("/ptr-pdfs/2026/20260001.pdf")
 
-    def test_watchlist_only_drops_untracked(self, ctx):
-        ctx.config.data["sources"]["congress"]["watchlist_only"] = True
-        tickers = {i.detail["ticker"] for i in CongressCollector().collect(ctx)}
-        assert tickers == {"NVDA", "AAPL"}
+    def test_non_equity_rows_are_dropped_by_default(self, ctx):
+        assets = {i.detail["asset"] for i in self.collect(ctx)}
+        assert not any("Treasury" in a for a in assets)
 
-    def test_provider_failure_raises_so_status_shows_it(self, ctx):
+    def test_stocks_only_can_be_turned_off(self, ctx):
+        ctx.config.data["sources"]["congress"]["stocks_only"] = False
+        ctx.config.data["sources"]["congress"]["lookback_days"] = 120  # that row is older
+        assets = {i.detail["asset"] for i in self.collect(ctx)}
+        assert any("Treasury" in a for a in assets)
+
+    def test_scanned_pdf_degrades_to_a_filing_pointer(self, ctx):
+        items = self.collect(ctx)
+        scanned = [i for i in items if i.detail["person"] == "Paul Scanned"]
+        assert len(scanned) == 1
+        assert scanned[0].detail["action"] == "filing"
+        assert "扫描件" in scanned[0].detail["asset"]
+        # A bare pointer must rank below a parsed transaction.
+        assert scanned[0].score < min(i.score for i in items if i.detail["ticker"])
+
+    def test_only_periodic_reports_within_lookback(self, ctx):
+        people = {i.detail["person"] for i in self.collect(ctx)}
+        assert "Ann Annual" not in people   # FilingType O, an annual report
+        assert "Abe Ancient" not in people  # filed in January, outside 45 days
+
+    def test_pdfs_are_parsed_once_and_cached(self, ctx, tmp_path):
+        from stock_radar.state import State
+
+        with State(tmp_path / "c.db") as state:
+            first = self.collect(ctx, state)
+            fetched = sum(1 for u in ctx.http.requested if "ptr-pdfs" in u)
+            second = self.collect(ctx, state)
+            assert sum(1 for u in ctx.http.requested if "ptr-pdfs" in u) == fetched
+        assert [i.key for i in first] == [i.key for i in second]
+
+
+class TestCongressSenate:
+    def collect(self, ctx, monkeypatch, state=None):
+        import stock_radar.collectors.congress as C
+
+        senate_fixture()
+        monkeypatch.setattr(C, "EfdSession", FakeEfd)
+        ctx.config.data["sources"]["congress"]["providers"] = ["senate_efd"]
+        return CongressCollector(state=state).collect(ctx)
+
+    def test_electronic_report_transactions(self, ctx, monkeypatch):
+        items = self.collect(ctx, monkeypatch)
+        aapl = next(i for i in items if i.detail["ticker"] == "AAPL")
+        assert aapl.detail["person"] == "Sam Senator"
+        assert aapl.detail["chamber"] == "Senate"
+        assert aapl.detail["action"] == "sale_full"
+        assert aapl.detail["amount_high"] == 250000
+        assert "配偶" in aapl.title
+
+    def test_paper_filing_degrades_to_a_pointer(self, ctx, monkeypatch):
+        items = self.collect(ctx, monkeypatch)
+        paper = next(i for i in items if i.detail["person"] == "Pat Paper")
+        assert paper.detail["action"] == "filing"
+        assert paper.url.endswith("/paper/def/")
+
+    def test_bonds_dropped_but_stocks_kept(self, ctx, monkeypatch):
+        items = self.collect(ctx, monkeypatch)
+        assert not any("Treasury" in i.detail["asset"] for i in items)
+
+
+class TestCongressMerging:
+    """Both chambers must show up, and one being down must not hide the other."""
+
+    def test_both_providers_merge(self, ctx, monkeypatch):
+        import stock_radar.collectors.congress as C
+
+        senate_fixture()
+        monkeypatch.setattr(C, "EfdSession", FakeEfd)
+        ctx.config.data["sources"]["congress"]["providers"] = ["house_clerk", "senate_efd"]
+        items = CongressCollector().collect(ctx)
+        assert {i.detail["chamber"] for i in items} == {"House", "Senate"}
+
+    def test_one_provider_down_keeps_the_other(self, ctx, monkeypatch):
+        import stock_radar.collectors.congress as C
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("eFD 挂了")
+
+        monkeypatch.setitem(C.PROVIDERS, "senate_efd", boom)
+        ctx.config.data["sources"]["congress"]["providers"] = ["house_clerk", "senate_efd"]
+        items = CongressCollector().collect(ctx)
+        assert {i.detail["chamber"] for i in items} == {"House"}
+        assert any("eFD 挂了" in note for note in ctx.notes)
+
+    def test_all_providers_down_raises(self, ctx):
         ctx.config.data["sources"]["congress"]["providers"] = ["nope"]
-        with pytest.raises(RuntimeError, match="unknown provider"):
+        with pytest.raises(RuntimeError, match="未知的 provider"):
             CongressCollector().collect(ctx)
 
-    def test_falls_through_to_next_provider(self, ctx):
-        ctx.http.routes.pop("house-stock-watcher")
-        ctx.http.routes.pop("senate-stock-watcher")
-        ctx.config.data["sources"]["congress"]["providers"] = ["stockwatcher", "house_clerk"]
-        # Both mirrors 404 and the clerk ZIP is unrouted: no data, no crash.
-        assert CongressCollector().collect(ctx) == []
+    def test_watchlist_only_filter(self, ctx):
+        ctx.config.data["sources"]["congress"]["providers"] = ["house_clerk"]
+        ctx.config.data["sources"]["congress"]["watchlist_only"] = True
+        tickers = {i.detail["ticker"] for i in CongressCollector().collect(ctx)}
+        assert tickers == {"NVDA", "AAPL"}  # MSFT is not on this test watchlist
+
+    def test_watchlist_ticker_outranks_the_rest(self, ctx):
+        ctx.config.data["sources"]["congress"]["providers"] = ["house_clerk"]
+        items = CongressCollector().collect(ctx)
+        nvda = next(i for i in items if i.detail["ticker"] == "NVDA")
+        msft = next(i for i in items if i.detail["ticker"] == "MSFT")
+        assert nvda.score > msft.score
 
 
 class TestFunds:

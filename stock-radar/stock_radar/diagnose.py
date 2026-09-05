@@ -336,3 +336,64 @@ def senate_report_shape(out=print) -> None:
             out("      " + text.strip()[:1600].replace("\n", " "))
         except Exception as exc:
             out(f"    ERR {type(exc).__name__}: {str(exc)[:120]}")
+
+
+def sec_403_detail(out=print) -> None:
+    """Read what EDGAR's rejection page actually says, and where the line is drawn.
+
+    A 403 from SEC can mean 'declare a User-Agent', 'you exceeded the rate limit', or
+    a network-level block, and each has a different remedy — the page says which.
+    """
+    out("\n" + "=" * 78)
+    out("== EDGAR 403 页面正文与边界测试")
+    out("=" * 78)
+    compliant = {
+        "User-Agent": "Stock Radar stock-radar@users.noreply.github.com",
+        "Accept-Encoding": "gzip, deflate",
+    }
+
+    for name, url in [
+        ("files/company_tickers.json", "https://www.sec.gov/files/company_tickers.json"),
+        ("Archives daily-index", "https://www.sec.gov/Archives/edgar/daily-index/2026/QTR3/index.json"),
+    ]:
+        try:
+            resp = requests.get(url, headers=compliant, timeout=TIMEOUT)
+        except Exception as exc:
+            out(f"\n  {name} → ERR {exc}")
+            continue
+        text = re.sub(r"<[^>]+>", " ", resp.text)
+        text = re.sub(r"\s+", " ", text).strip()
+        out(f"\n  {name} → {resp.status_code}")
+        out(f"    响应头: server={resp.headers.get('server')} "
+            f"x-cache={resp.headers.get('x-cache')} retry-after={resp.headers.get('retry-after')}")
+        out(f"    正文: {text[:700]}")
+
+    out("\n  --- 用同一个会话：先访问允许的页面拿 cookie，再取 Archives")
+    session = requests.Session()
+    session.headers.update(compliant)
+    try:
+        warmup = session.get("https://www.sec.gov/news/pressreleases.rss", timeout=TIMEOUT)
+        out(f"    预热 {warmup.status_code}, cookies={list(session.cookies.keys())}")
+        again = session.get(
+            "https://www.sec.gov/Archives/edgar/daily-index/2026/QTR3/index.json", timeout=TIMEOUT
+        )
+        out(f"    再取 Archives → {again.status_code}")
+    except Exception as exc:
+        out(f"    ERR {exc}")
+
+    out("\n  --- 逐段路径定位封锁边界（合规 UA）")
+    for url in [
+        "https://www.sec.gov/",
+        "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=4&count=1",
+        "https://www.sec.gov/Archives/",
+        "https://www.sec.gov/Archives/edgar/",
+        "https://www.sec.gov/Archives/edgar/data/320193/",
+        "https://data.sec.gov/submissions/CIK0000320193.json",
+        "https://data.sec.gov/api/xbrl/companyconcept/CIK0000320193/us-gaap/Assets.json",
+        "https://efts.sec.gov/LATEST/search-index?q=%22nvidia%22&forms=4",
+    ]:
+        try:
+            resp = requests.get(url, headers=compliant, timeout=TIMEOUT)
+            out(f"    {resp.status_code}  {url}")
+        except Exception as exc:
+            out(f"    ERR  {url}  {type(exc).__name__}")

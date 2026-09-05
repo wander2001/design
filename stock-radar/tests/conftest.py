@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import json
 import sys
+import zipfile
 from datetime import date
 from pathlib import Path
 
@@ -19,6 +21,59 @@ TODAY = date(2026, 9, 3)
 def fixture(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
 
+
+def make_pdf(lines: list[str]) -> bytes:
+    """A minimal but genuine PDF, so tests exercise real pypdf text extraction."""
+
+    def esc(text: str) -> str:
+        text = text.encode("latin-1", "replace").decode("latin-1")
+        return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    stream = "BT\n/F1 10 Tf\n12 TL\n40 760 Td\n" + "".join(f"({esc(l)}) Tj T*\n" for l in lines) + "ET"
+    objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n{body}\nendobj\n".encode("latin-1")
+    xref = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+def house_zip(members: list[dict]) -> bytes:
+    """The Clerk's yearly disclosure index, in the ZIP-of-XML shape it really ships."""
+    rows = "".join(
+        "<Member>" + "".join(f"<{k}>{v}</{k}>" for k, v in m.items()) + "</Member>" for m in members
+    )
+    xml = f'<?xml version="1.0"?><FinancialDisclosure>{rows}</FinancialDisclosure>'
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("2026FD.txt", "ignored")
+        zf.writestr("2026FD.xml", xml)
+    return buffer.getvalue()
+
+
+HOUSE_MEMBERS = [
+    {"Prefix": "Hon.", "Last": "Doe", "First": "Jane", "FilingType": "P",
+     "StateDst": "CA12", "Year": "2026", "FilingDate": "9/02/2026", "DocID": "20260001"},
+    {"Prefix": "Hon.", "Last": "Scanned", "First": "Paul", "FilingType": "P",
+     "StateDst": "TX07", "Year": "2026", "FilingDate": "9/01/2026", "DocID": "20260002"},
+    {"Prefix": "Hon.", "Last": "Annual", "First": "Ann", "FilingType": "O",
+     "StateDst": "NY01", "Year": "2026", "FilingDate": "9/02/2026", "DocID": "20260003"},
+    {"Prefix": "Hon.", "Last": "Ancient", "First": "Abe", "FilingType": "P",
+     "StateDst": "FL05", "Year": "2026", "FilingDate": "1/05/2026", "DocID": "20260004"},
+]
 
 MASTER_IDX = b"""Description:           Master Index of EDGAR Dissemination Feed
 CIK|Company Name|Form Type|Date Filed|Filename
@@ -160,7 +215,13 @@ def http() -> FakeHttp:
                 {"directory": {"item": [{"name": "primary_doc.xml"}, {"name": "infotable.xml"}]}}
             ).encode(),
             "000106798326000010/infotable.xml": fixture("13f_q1.xml"),
-            # congress
+            # congress (official House Clerk sources)
+            "financial-pdfs/2026FD.ZIP": house_zip(HOUSE_MEMBERS),
+            "ptr-pdfs/2026/20260001.pdf": make_pdf(
+                [l.replace("\x00", "") for l in fixture("house_ptr_text.txt").decode().splitlines() if l.strip()]
+            ),
+            "ptr-pdfs/2026/20260002.pdf": make_pdf(["scanned image, no text table"]),
+            # legacy mirrors, for the provider that still supports self-hosted copies
             "house-stock-watcher": CONGRESS_HOUSE,
             "senate-stock-watcher": CONGRESS_SENATE,
             # news
@@ -185,6 +246,8 @@ def ctx(http, tmp_path):
         {"name": "SEC Press", "url": "https://www.sec.gov/news/pressreleases.rss"},
     ]
     config.data["sources"]["news"]["per_ticker_feed"] = ""
+    # eFD needs a real cookie jar, so it is opted into per-test rather than by default.
+    config.data["sources"]["congress"]["providers"] = ["house_clerk"]
     config.data["output"]["dir"] = str(tmp_path / "out")
     config.data["state"]["path"] = str(tmp_path / "state.db")
     return CollectorContext(config=config, http=http, edgar=Edgar(http), today=TODAY)

@@ -24,7 +24,12 @@ log = logging.getLogger(__name__)
 
 
 def build_collectors(state: State | None):
-    return [CongressCollector(), InsiderCollector(), FundCollector(state=state), NewsCollector()]
+    return [
+        CongressCollector(state=state),
+        InsiderCollector(),
+        FundCollector(state=state),
+        NewsCollector(),
+    ]
 
 
 def run(

@@ -51,7 +51,7 @@ class TestRun:
         ctx.config.data["sources"]["congress"]["providers"] = ["nope"]
         report, _ = patched_run()
         congress = next(s for s in report.statuses if s.name == "congress")
-        assert not congress.ok and "unknown provider" in congress.message
+        assert not congress.ok and "未知的 provider" in congress.message
         # The other sections still produced their items.
         assert {i.kind for i in report.items} >= {"insider", "news"}
 

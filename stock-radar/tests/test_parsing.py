@@ -102,9 +102,13 @@ class TestCongressHelpers:
         assert parse_date(None) is None
 
     def test_transaction_types(self):
-        assert normalize_type("Sale (Full)") == "sale"
+        assert normalize_type("Sale (Full)") == "sale_full"
+        assert normalize_type("Sale (Partial)") == "sale_partial"
         assert normalize_type("sale_partial") == "sale_partial"
+        assert normalize_type("Sale") == "sale"
         assert normalize_type("Purchase") == "purchase"
+        assert normalize_type("P") == "purchase"
+        assert normalize_type("E") == "exchange"
 
 
 class TestFeeds:

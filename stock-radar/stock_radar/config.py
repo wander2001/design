@@ -24,10 +24,14 @@ DEFAULTS: dict[str, Any] = {
     "sources": {
         "congress": {
             "enabled": True,
-            "providers": ["stockwatcher"],
+            "providers": ["house_clerk", "senate_efd"],
             "lookback_days": 45,
-            "min_amount_usd": 15000,
+            "min_amount_usd": 1000,   # PTR ranges start at $1,001
+            "stocks_only": True,
             "watchlist_only": False,
+            "max_filings": 80,
+            "house_mirror_url": "",
+            "senate_mirror_url": "",
         },
         "insiders": {
             "enabled": True,
