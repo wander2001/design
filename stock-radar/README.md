@@ -79,6 +79,21 @@ python -m stock_radar find-fund berkshire
 
 第一次跑会把该基金最大持仓当作基线，之后每季新 13F 一到就自动 diff 出变动。
 
+### 让报告挂在一个固定网址上（GitHub Pages）
+
+配好之后你只要收藏一个链接，每天早上自己更新：
+
+- 最新一期 `https://wander2001.github.io/design/`
+- 往期归档 `https://wander2001.github.io/design/archive.html`
+
+**需要你手动开一次**：仓库 **Settings → Pages → Source 选 "GitHub Actions"**。
+没开的话建站那个 job 会失败，但不影响报告生成，整体不会变红。
+
+> ⚠️ **这个仓库是公开的，挂上去之后任何人都能看到你的报告和 watchlist。**
+> 报告本身只含政府公开披露数据，没有密钥；但"你在关注哪些股票"会变成公开信息。
+> 不想公开就别开 Pages——报告照样在 Actions 的 Summary 页和 Artifact 里，
+> 或者干脆在本机跑，只写到 `out/`。
+
 ## 推送渠道
 
 配置里只写**环境变量的名字**，真正的密钥放环境变量 / GitHub Secrets，不进 git。

@@ -42,7 +42,9 @@ jobs:
       - name: Restore state
         uses: actions/cache@v4
         with:
-          path: stock-radar/.stock-radar
+          path: |
+            stock-radar/.stock-radar
+            stock-radar/out
           key: stock-radar-state-${{ github.run_id }}
           restore-keys: stock-radar-state-
 
@@ -80,6 +82,55 @@ jobs:
         if: always()
         run: cat out/latest.md >> "$GITHUB_STEP_SUMMARY" || echo "本次没有生成报告" >> "$GITHUB_STEP_SUMMARY"
 
+      # Today's report becomes the site's front page; the dated copies become an archive.
+      - name: Build site
+        if: always()
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+
+          out = pathlib.Path("out")
+          latest = out / "latest.html"
+          if not latest.exists():
+              raise SystemExit("没有 latest.html，跳过建站")
+
+          dated = sorted(
+              (p for p in out.glob("*.html") if re.fullmatch(r"\d{4}-\d{2}-\d{2}", p.stem)),
+              key=lambda p: p.stem,
+              reverse=True,
+          )
+          nav = (
+              '<div style="max-width:760px;margin:18px auto 0;padding:0 30px 40px;'
+              'font:13px -apple-system,BlinkMacSystemFont,\'Segoe UI\',\'PingFang SC\',sans-serif;'
+              'color:#6b7280;text-align:center;">'
+              f'<a href="archive.html" style="color:#2563eb;">查看往期报告（{len(dated)} 期）</a>'
+              "</div>"
+          )
+          body = latest.read_text(encoding="utf-8")
+          (out / "index.html").write_text(body.replace("</body>", nav + "</body>"), encoding="utf-8")
+
+          rows = "".join(
+              f'<li><a href="{p.name}">{p.stem}</a></li>' for p in dated
+          ) or "<li>还没有历史报告</li>"
+          (out / "archive.html").write_text(
+              "<!doctype html><html lang=\"zh\"><head><meta charset=\"utf-8\">"
+              '<meta name="viewport" content="width=device-width,initial-scale=1">'
+              "<title>往期报告 · 每日股票雷达</title></head>"
+              '<body style="margin:0;padding:40px 20px;background:#f5f6f8;color:#16181d;'
+              "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif;\">"
+              '<div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid #e4e6eb;'
+              'border-radius:14px;padding:28px 30px;">'
+              '<h1 style="margin:0 0 4px;font-size:20px;">往期报告</h1>'
+              f'<p style="margin:0 0 20px;color:#6b7280;font-size:13px;">共 {len(dated)} 期 · '
+              '<a href="index.html" style="color:#2563eb;">回到最新一期</a></p>'
+              f'<ul style="margin:0;padding-left:20px;line-height:2;font-variant-numeric:tabular-nums;">{rows}</ul>'
+              "</div></body></html>",
+              encoding="utf-8",
+          )
+          print(f"建站完成：index.html + archive.html（{len(dated)} 期归档）")
+          PY
+
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
@@ -88,3 +139,26 @@ jobs:
           path: stock-radar/out/
           retention-days: 30
           if-no-files-found: warn
+
+      - name: Upload site
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: stock-radar/out
+
+  # 把报告挂到一个固定网址上。需要先在仓库 Settings → Pages 把 Source 选成 "GitHub Actions"；
+  # 没开的话这个 job 会失败但不影响上面的报告生成，所以整体不会变红。
+  publish:
+    needs: digest
+    if: always()
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
