@@ -156,13 +156,17 @@ python -m stock_radar find-fund "pershing square"
 `probe` 和 `diagnose` 会在 GitHub Actions 上跑（`.github/workflows/stock-radar-probe.yml`，
 每周一定时 + 每次改动代码时），打的是真实端点。截至最近一次运行：
 
-- ✅ 7/7 新闻 RSS 源可用，条目、时间戳、摘要都正确解析
-- ✅ 众议院年度索引可下载，PTR PDF 链接格式正确，正文可抽取并解析成交易记录
-- ✅ 参议院 eFD 的同意条款 + CSRF + 搜索接口全流程可用
+- ✅ 7/7 新闻 RSS 源可用，条目、时间戳、摘要都正确解析（单次 40 条）
+- ✅ 众议院：年度索引 → PTR PDF → 解析出真实交易；参议院：同意条款 + CSRF + 搜索 + 电子报告表格全通
+- ✅ 一次真实运行拿到 **448 条**两院交易，例如
+  `David J. Taylor (House) 买入 GOOGL $1,001-$15,000 · 延迟披露 20 天`、
+  `Sheldon Whitehouse (Senate) 部分卖出 NVDA $15,001-$50,000 · 延迟披露 20 天`
 - ❌ SEC EDGAR 在 GitHub 的 IP 上被限流（见上文），Form 4 / 13F 需要在本机验证
 
-`python -m pytest -q` 有 74 个测试，全部离线跑，覆盖真实格式样本
-（Form 4 XML、13F 信息表、EDGAR master.idx、RSS/Atom、众议院 PTR PDF、参议院 eFD 表格）。
+> 第一次跑国会板块会一次性输出 45 天的存量（几百条），之后每天只报新增。
+
+`python -m pytest -q` 有 81 个测试，全部离线跑，覆盖真实格式样本
+（Form 4 XML、13F 信息表、EDGAR master.idx、RSS/Atom、众议院 PTR PDF、参议院 eFD 表格、SEC 的两种 403 页面）。
 
 ## 开发
 
