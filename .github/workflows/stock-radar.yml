@@ -23,6 +23,8 @@ jobs:
   digest:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: stock-radar
@@ -130,6 +132,51 @@ jobs:
           )
           print(f"建站完成：index.html + archive.html（{len(dated)} 期归档）")
           PY
+
+      # 报告推到一个孤儿分支上，GitHub 会把 Markdown 直接渲染出来——
+      # 不需要开 Pages、不需要下载 artifact，手机浏览器打开就能看。
+      # 用孤儿分支是为了不把每天的提交混进代码历史。
+      # 报告推到一个孤儿分支上，GitHub 会把 Markdown 直接渲染出来——
+      # 不需要开 Pages、不需要下载 artifact，手机浏览器打开就能看。
+      # 分支每次整棵重建（历史只留一版），文件本身照常累积。
+      - name: Publish report to the reports branch
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ -f out/latest.md ]] || { echo "没有报告可发布，跳过"; exit 0; }
+          cd "$GITHUB_WORKSPACE"
+
+          staging=$(mktemp -d)
+          # 取回分支已有内容；第一次跑时分支还不存在，staging 就是空的
+          if git fetch --depth=1 origin reports 2>/dev/null; then
+            git archive FETCH_HEAD | tar -x -C "$staging"
+          fi
+          cp stock-radar/out/*.md "$staging"/
+
+          {
+            echo "# 每日股票雷达 · 报告存档"
+            echo
+            echo "最新一期 → **[latest.md](latest.md)**"
+            echo
+            echo "更新于 $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo
+            echo "## 往期"
+            echo
+            ls -1 "$staging" | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$' | sort -r \
+              | sed -E 's/^(.*)\.md$/- [\1](\1.md)/' || echo "_（还没有往期）_"
+          } > "$staging/README.md"
+
+          cd "$staging"
+          git init -q -b reports
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git add -A
+          git commit -q -m "报告 $(date -u '+%Y-%m-%d')"
+          git push -f -q origin reports
+          echo "已发布 → https://github.com/${GITHUB_REPOSITORY}/blob/reports/latest.md"
 
       - name: Upload report
         if: always()

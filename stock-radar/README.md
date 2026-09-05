@@ -79,6 +79,16 @@ python -m stock_radar find-fund berkshire
 
 第一次跑会把该基金最大持仓当作基线，之后每季新 13F 一到就自动 diff 出变动。
 
+### 报告发到 reports 分支（零设置，推荐先用这个）
+
+**什么都不用配**，工作流跑完会自动把报告推到一个孤儿分支上，GitHub 直接渲染 Markdown：
+
+- 最新一期 `https://github.com/wander2001/design/blob/reports/latest.md`
+- 往期索引 `https://github.com/wander2001/design/blob/reports/README.md`
+
+手机浏览器打开就能看，不用下载 artifact，也不用开 Pages。分支每次整棵重建（历史只留一版，
+不会把每天的提交混进代码历史），但报告文件本身照常累积。
+
 ### 让报告挂在一个固定网址上（GitHub Pages）
 
 配好之后你只要收藏一个链接，每天早上自己更新：
