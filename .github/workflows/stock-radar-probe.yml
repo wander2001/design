@@ -46,6 +46,10 @@ jobs:
           pathlib.Path("probe-config.yaml").write_text(yaml.safe_dump(d, allow_unicode=True))
           PY
 
+      - name: Deep diagnostics (SEC 准入矩阵 / 国会数据源存活)
+        continue-on-error: true
+        run: python -m stock_radar diagnose 2>&1 | tee diagnose.log
+
       - name: Probe every data source
         id: probe
         continue-on-error: true
@@ -57,7 +61,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          python -m stock_radar run -c probe-config.yaml --no-notify -v 2>&1 | tail -50 | tee run.log
+          python -m stock_radar -v run -c probe-config.yaml --no-notify 2>&1 | tail -50 | tee run.log
           echo "================ 真实数据生成的报告 ================"
           cat probe-out/latest.md
 
@@ -68,6 +72,7 @@ jobs:
           name: probe-${{ github.run_id }}
           path: |
             stock-radar/probe.log
+            stock-radar/diagnose.log
             stock-radar/run.log
             stock-radar/probe-out/
           retention-days: 14

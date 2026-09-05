@@ -130,6 +130,9 @@ def main(argv: list[str] | None = None) -> int:
     p_init.add_argument("--force", action="store_true")
     p_init.set_defaults(func=cmd_init)
 
+    p_diag = sub.add_parser("diagnose", help="深度诊断：SEC 准入矩阵、国会数据源存活情况")
+    p_diag.set_defaults(func=lambda a: (__import__("stock_radar.diagnose", fromlist=["run_all"]).run_all(), 0)[1])
+
     p_probe = sub.add_parser("probe", help="体检：逐个打真实数据源，检查格式假设是否还成立")
     p_probe.add_argument("-c", "--config", default="config.yaml")
     p_probe.add_argument("--date", help="以指定日期运行 (YYYY-MM-DD)")
