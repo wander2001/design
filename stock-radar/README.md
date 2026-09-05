@@ -174,6 +174,12 @@ python -m stock_radar find-fund "pershing square"
 `python -m pytest -q` 有 81 个测试，全部离线跑，覆盖真实格式样本
 （Form 4 XML、13F 信息表、EDGAR master.idx、RSS/Atom、众议院 PTR PDF、参议院 eFD 表格、SEC 的两种 403 页面）。
 
+## 延伸阅读
+
+[`docs/研究笔记-同类开源项目对比.md`](docs/研究笔记-同类开源项目对比.md) ——
+对同类开源项目的多源调研（25 条断言经 3 票对抗验证），记录了为什么这里的每个设计选择是现在这样，
+以及哪些"看起来像常识"的说法其实被推翻了。改动数据源相关代码前值得先看一眼。
+
 ## 开发
 
 ```bash
