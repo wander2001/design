@@ -315,3 +315,19 @@ class TestProbeWiring:
     def test_duplicate_rows_keep_separate_keys(self, ctx):
         items = CongressCollector().collect(ctx)
         assert len({i.key for i in items}) == len(items)
+
+
+class TestCoverageGapsAreReported:
+    """A scanned filing is missing data, not a quiet success — the run must say so."""
+
+    def test_house_scanned_count_reaches_the_status(self, ctx):
+        ctx.config.data["sources"]["congress"]["providers"] = ["house_clerk"]
+        CongressCollector().collect(ctx)
+        note = next(n for n in ctx.notes if "扫描件" in n)
+        assert "1/2" in note and "众议院" in note
+
+    def test_no_note_when_everything_parsed(self, ctx):
+        ctx.config.data["sources"]["congress"]["providers"] = ["house_clerk"]
+        ctx.http.routes["ptr-pdfs/2026/20260002.pdf"] = ctx.http.routes["ptr-pdfs/2026/20260001.pdf"]
+        CongressCollector().collect(ctx)
+        assert not any("扫描件" in n for n in ctx.notes)

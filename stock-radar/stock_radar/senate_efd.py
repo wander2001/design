@@ -151,7 +151,12 @@ class EfdSession:
         )
         accepted.raise_for_status()
         # The agreement POST rotates the CSRF cookie; later posts must use the new one.
-        self.token = self.session.cookies.get("csrftoken", self.token)
+        # eFD has shipped this cookie under both names, so try each before giving up.
+        for name in ("csrftoken", "csrf"):
+            rotated = self.session.cookies.get(name)
+            if rotated:
+                self.token = rotated
+                break
 
     def search_ptrs(self, since: date, limit: int = 100) -> list[SenateFiling]:
         resp = self.session.post(

@@ -170,6 +170,7 @@ def _from_house_clerk(ctx: CollectorContext, state=None) -> list[CongressTrade]:
         recent = recent[:max_filings]
 
     trades: list[CongressTrade] = []
+    unparsed = 0
     for filing in recent:
         doc_id = filing.get("DocID", "")
         year = filing.get("Year") or str(ctx.today.year)
@@ -186,6 +187,7 @@ def _from_house_clerk(ctx: CollectorContext, state=None) -> list[CongressTrade]:
             continue
         if not rows:
             # A scanned PDF has no machine-readable table; the link is still useful.
+            unparsed += 1
             trades.append(
                 CongressTrade(
                     person=person, chamber="House", ticker="",
@@ -216,6 +218,11 @@ def _from_house_clerk(ctx: CollectorContext, state=None) -> list[CongressTrade]:
                     is_equity=row["is_equity"],
                 )
             )
+    if unparsed:
+        # Scanned filings are a real coverage gap, not a quiet success — say so.
+        ctx.notes.append(
+            f"众议院有 {unparsed}/{len(recent)} 份 PTR 是扫描件，抽不出交易明细，只给了 PDF 链接"
+        )
     return trades
 
 
@@ -269,6 +276,7 @@ def _from_senate_efd(ctx: CollectorContext, state=None) -> list[CongressTrade]:
         return []
 
     trades: list[CongressTrade] = []
+    unparsed = 0
     for filing in filings:
         key = f"ptr:senate:{filing.url.rstrip('/').rsplit('/', 1)[-1]}"
         cached = state.get_snapshot(key) if state is not None else None
@@ -298,6 +306,7 @@ def _from_senate_efd(ctx: CollectorContext, state=None) -> list[CongressTrade]:
                 state.put_snapshot(key, {"rows": rows})
 
         if not rows:
+            unparsed += 1
             trades.append(
                 CongressTrade(
                     person=filing.person, chamber="Senate", ticker="",
@@ -329,6 +338,10 @@ def _from_senate_efd(ctx: CollectorContext, state=None) -> list[CongressTrade]:
                     is_equity=bool(row["ticker"]) or "stock" in asset_type.lower(),
                 )
             )
+    if unparsed:
+        ctx.notes.append(
+            f"参议院有 {unparsed}/{len(filings)} 份申报是纸质/扫描件，抽不出交易明细，只给了链接"
+        )
     return trades
 
 

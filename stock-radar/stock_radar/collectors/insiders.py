@@ -51,6 +51,13 @@ class InsiderTrade:
     derivative: bool
     url: str
     shares_after: float = 0.0
+    # A 4/A restates an earlier Form 4; counting both double-counts the trade.
+    amendment: bool = False
+    original_filed: str = ""
+    # Shares held through a trust or another entity rather than in the insider's
+    # own name — the same dollar amount means something different.
+    indirect: bool = False
+    ownership_note: str = ""
 
 
 def _num(raw: str) -> float:
@@ -90,6 +97,9 @@ def parse_form4(xml_bytes: bytes, accession: str, url: str) -> list[InsiderTrade
         log.warning("unparseable Form 4 %s: %s", accession, exc)
         return []
 
+    original_filed = text_of(root, "dateOfOriginalSubmission")
+    is_amendment = bool(original_filed) or text_of(root, "documentType").endswith("/A")
+
     issuer_node = _find(root, "issuer")
     issuer = text_of(issuer_node, "issuerName")
     ticker = (text_of(issuer_node, "issuerTradingSymbol") or "").upper().strip()
@@ -117,6 +127,9 @@ def parse_form4(xml_bytes: bytes, accession: str, url: str) -> list[InsiderTrade
             shares = _num(text_of(amounts, "transactionShares"))
             price = _num(text_of(amounts, "transactionPricePerShare"))
             acquired = text_of(amounts, "transactionAcquiredDisposedCode").upper() == "A"
+            nature = _find(txn, "ownershipNature")
+            indirect = text_of(nature, "directOrIndirectOwnership").upper().startswith("I")
+            ownership_note = text_of(nature, "natureOfOwnership")
             when_raw = text_of(txn, "transactionDate")
             try:
                 when = date.fromisoformat(when_raw) if when_raw else None
@@ -140,6 +153,10 @@ def parse_form4(xml_bytes: bytes, accession: str, url: str) -> list[InsiderTrade
                     shares_after=_num(
                         text_of(_find(txn, "postTransactionAmounts"), "sharesOwnedFollowingTransaction")
                     ),
+                    amendment=is_amendment,
+                    original_filed=original_filed,
+                    indirect=indirect,
+                    ownership_note=ownership_note,
                 )
             )
     return trades
@@ -226,10 +243,23 @@ class InsiderCollector:
             zh, en = CODE_LABEL.get(t.code.upper(), (t.code, t.code))
             direction = zh if not t.derivative else f"{zh}(衍生品)"
             label = t.ticker or t.issuer
-            title = f"{label} · {t.owner} {direction} {t.shares:,.0f} 股 ({_fmt_money(t.value)})"
+            tags = "".join(
+                [
+                    "【修正申报】" if t.amendment else "",
+                    "[间接持有]" if t.indirect else "",
+                ]
+            )
+            title = f"{label} · {t.owner} {direction} {t.shares:,.0f} 股 ({_fmt_money(t.value)}){tags}"
             summary_bits = [f"{t.title}" if t.title else "", f"成交价 ${t.price:,.2f}" if t.price else ""]
             if t.shares_after:
                 summary_bits.append(f"交易后持股 {t.shares_after:,.0f}")
+            if t.amendment:
+                summary_bits.append(
+                    f"这是对{('（原申报日 ' + t.original_filed + '）') if t.original_filed else ''}既有申报的修正，"
+                    "不是新增交易，统计时勿与原件重复计数"
+                )
+            if t.indirect and t.ownership_note:
+                summary_bits.append(f"持有形式: {t.ownership_note}")
             # A purchase by an officer is the highest-signal insider event; scale by size.
             base = 60.0 if t.code.upper() == "P" else 40.0
             score = base + min(30.0, t.value / 1_000_000)
@@ -255,6 +285,10 @@ class InsiderCollector:
                     "acquired": t.acquired,
                     "derivative": t.derivative,
                     "accession": t.accession,
+                    "amendment": t.amendment,
+                    "original_filed": t.original_filed,
+                    "indirect": t.indirect,
+                    "ownership_note": t.ownership_note,
                 },
             )
             yield item.with_key(t.accession, idx, t.code, t.shares, t.price)

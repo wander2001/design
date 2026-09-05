@@ -250,3 +250,38 @@ class TestSenateReportTable:
         paper = SenateFiling("A", "B", "Senator", "PTR",
                              "https://efdsearch.senate.gov/search/view/paper/x/", date(2026, 9, 1))
         assert session.transactions(paper) == []
+
+
+class TestForm4Amendments:
+    """A 4/A restates an earlier filing; treating it as new double-counts the trade."""
+
+    def trades(self):
+        from stock_radar.collectors.insiders import parse_form4
+
+        return parse_form4(fixture("form4_amendment.xml"), "acc-a", "http://x")
+
+    def test_amendment_is_flagged_with_its_original_date(self):
+        trade = self.trades()[0]
+        assert trade.amendment is True
+        assert trade.original_filed == "2026-09-04"
+
+    def test_indirect_ownership_is_captured(self):
+        trade = self.trades()[0]
+        assert trade.indirect is True
+        assert trade.ownership_note == "By Family Trust"
+
+    def test_plain_form4_is_neither(self):
+        from stock_radar.collectors.insiders import parse_form4
+
+        trade = parse_form4(fixture("form4_sample.xml"), "acc", "u")[0]
+        assert trade.amendment is False and trade.indirect is False
+
+    def test_report_warns_against_double_counting(self):
+        from stock_radar.collectors.insiders import InsiderCollector
+
+        item = next(iter(InsiderCollector._to_items(self.trades(), {"P"}, 1000)))
+        assert "【修正申报】" in item.title
+        assert "[间接持有]" in item.title
+        assert "勿与原件重复计数" in item.summary
+        assert "By Family Trust" in item.summary
+        assert item.detail["amendment"] is True and item.detail["indirect"] is True
